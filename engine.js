@@ -144,7 +144,7 @@ export function reducer(state, action) {
     case "hideCard":
       if (state.phase !== "cards" || state.passing) return state;
       if (state.cardIndex >= state.players.length - 1) return { ...state, phase: "briefing", passing: false };
-      return { ...state, passing: true };
+      return { ...state, passing: false, cardIndex: state.cardIndex + 1 };
     case "armNext":
       if (state.phase !== "cards" || !state.passing) return state;
       return { ...state, passing: false, cardIndex: state.cardIndex + 1 };
