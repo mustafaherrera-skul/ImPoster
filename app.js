@@ -1546,7 +1546,10 @@ function initEvents() {
   document.addEventListener("fullscreenchange", () => {
     const fsBtn = root.querySelector("[data-fullscreen]");
     if (fsBtn) {
-      fsBtn.textContent = document.fullscreenElement ? "⤦" : "⛶";
+      const isFs = typeof document !== "undefined" && !!document.fullscreenElement;
+      fsBtn.innerHTML = getFullscreenSvg(isFs);
+      fsBtn.setAttribute("aria-label", isFs ? "Salir de pantalla completa" : "Pantalla completa");
+      fsBtn.setAttribute("title", isFs ? "Salir de pantalla completa" : "Pantalla completa");
     }
   });
 }
