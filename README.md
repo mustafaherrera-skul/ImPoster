@@ -51,3 +51,4 @@ Tema oscuro por defecto, con botón para pasar a modo claro.
 - Aumentar la fuente en textos que estan muy chicos (por ej: en la pantalla del temporizador 2 mins)
 - No hay favicon, o al menos no carga
 - Mejorar suma de puntaje de impostores: si hay solo 1 impostor que no sume infiltración perfecta, ya que eso sucede si o si, y terminan siendo 380pts
+- Que funcione el sistema de salas, no funciona nada, no puedo ni crear ni modificar ni siquiera anda la X para sacar la ventana
