@@ -40,3 +40,10 @@ No hace falta servidor, base de datos ni cuenta. Todo pasa en el navegador.
 6. Al finalizar la partida, pasá a la **Tabla de Posiciones** para ver la animación de puntos y quién lidera el podio.
 
 Tema oscuro por defecto, con botón para pasar a modo claro.
+
+---
+
+## COSAS PARA AGREGAR / MODIFICAR:
+
+- Poder elegir si la cantidad de impostores sea random o elegida manualmente
+- Poder terminar el torneo y que salga el ganador. Tmb opción para resetear los puntos
