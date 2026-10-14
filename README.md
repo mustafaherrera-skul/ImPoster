@@ -48,4 +48,6 @@ Tema oscuro por defecto, con botón para pasar a modo claro.
 - Poder elegir si la cantidad de impostores sea random o elegida manualmente
 - Poder terminar el torneo y que salga el ganador. Tmb opción para resetear los puntos
 - Arreglar estilo en modo claro, en zona de votación (los nombres estan en blanco)
-- Aumentar la fuente en textos que estan muy chicos
+- Aumentar la fuente en textos que estan muy chicos (por ej: en la pantalla del temporizador 2 mins)
+- No hay favicon, o al menos no carga
+- 
