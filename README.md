@@ -50,4 +50,4 @@ Tema oscuro por defecto, con botón para pasar a modo claro.
 - Arreglar estilo en modo claro, en zona de votación (los nombres estan en blanco)
 - Aumentar la fuente en textos que estan muy chicos (por ej: en la pantalla del temporizador 2 mins)
 - No hay favicon, o al menos no carga
-- 
+- Mejorar suma de puntaje de impostores: si hay solo 1 impostor que no sume infiltración perfecta, ya que eso sucede si o si, y terminan siendo 380pts
