@@ -5,6 +5,7 @@ export function createInitial() {
   return {
     players: [],
     impostorCount: 1,
+    deckId: "standard",
     phase: "lobby",
     word: null,
     hint: null,
@@ -13,6 +14,7 @@ export function createInitial() {
     round: 1,
     starterId: null,
     countdownStartedAt: null,
+    suspenseStartedAt: null,
     talkStartedAt: null,
     voteId: null,
     confirming: false,
@@ -120,14 +122,27 @@ export function reducer(state, action) {
       players[next] = current;
       return { ...state, players };
     }
+    case "reorder": {
+      if (state.phase !== "lobby") return state;
+      const { from, to } = action;
+      if (from < 0 || from >= state.players.length || to < 0 || to >= state.players.length || from === to) return state;
+      const players = [...state.players];
+      const [moved] = players.splice(from, 1);
+      players.splice(to, 0, moved);
+      return { ...state, players };
+    }
     case "setImpostors":
       if (state.phase !== "lobby") return state;
       return { ...state, impostorCount: clampImpostors(action.count, state.players.length) };
+    case "setDeck":
+      if (state.phase !== "lobby") return state;
+      return { ...state, deckId: action.deckId || "standard" };
     case "deal": {
       if (!canStart(state)) return state;
       const impostors = new Set(action.impostorIds);
       return {
         ...createInitial(),
+        deckId: state.deckId || "standard",
         players: state.players.map((player) => ({
           ...player,
           alive: true,
@@ -142,12 +157,19 @@ export function reducer(state, action) {
       };
     }
     case "hideCard":
-      if (state.phase !== "cards" || state.passing) return state;
-      if (state.cardIndex >= state.players.length - 1) return { ...state, phase: "briefing", passing: false };
+      if (state.phase !== "cards") return state;
+      if (state.cardIndex >= state.players.length - 1) {
+        return {
+          ...state,
+          phase: "countdown",
+          passing: false,
+          countdownStartedAt: action.now || Date.now(),
+        };
+      }
       return { ...state, passing: false, cardIndex: state.cardIndex + 1 };
     case "armNext":
-      if (state.phase !== "cards" || !state.passing) return state;
-      return { ...state, passing: false, cardIndex: state.cardIndex + 1 };
+      if (state.phase !== "cards") return state;
+      return { ...state, passing: false, cardIndex: Math.min(state.players.length - 1, state.cardIndex + 1) };
     case "rerollStarter":
       if (state.phase !== "briefing") return state;
       return { ...state, starterId: action.starterId };
@@ -174,8 +196,11 @@ export function reducer(state, action) {
       return { ...state, confirming: true };
     case "cancelConfirm":
       return { ...state, confirming: false };
-    case "confirmEliminate": {
+    case "beginSuspense":
       if (state.phase !== "vote" || !state.voteId) return state;
+      return { ...state, phase: "suspense", suspenseStartedAt: action.now || Date.now(), confirming: false };
+    case "confirmEliminate": {
+      if ((state.phase !== "vote" && state.phase !== "suspense") || !state.voteId) return state;
       const target = state.players.find((player) => player.id === state.voteId && player.alive);
       if (!target?.role) return state;
       const players = state.players.map((player) => (player.id === target.id ? { ...player, alive: false } : player));
@@ -191,28 +216,38 @@ export function reducer(state, action) {
         phase: "reveal",
         confirming: false,
         voteId: null,
+        suspenseStartedAt: null,
         eliminated: [...state.eliminated, { id: target.id, name: target.name, role: target.role }],
         winner,
         impostorsRemain: winner === null && target.role === "impostor",
       };
     }
     case "nextRound": {
-      if (state.phase !== "reveal" || state.winner || !state.starterId) return state;
+      if (state.phase !== "reveal" || state.winner) return state;
+      const alive = state.players.filter((p) => p.alive);
+      if (!alive.length) return state;
+      const others = alive.filter((p) => p.id !== state.starterId);
+      const pool = others.length ? others : alive;
+      const nextStarter = pool[Math.floor(Math.random() * pool.length)].id;
       return {
         ...state,
         phase: "countdown",
         round: state.round + 1,
-        starterId: nextAliveId(state.players, state.starterId),
-        countdownStartedAt: action.now,
+        starterId: nextStarter,
+        countdownStartedAt: action.now || Date.now(),
         talkStartedAt: null,
         confirming: false,
         voteId: null,
         impostorsRemain: false,
       };
     }
+    case "voteAgain":
+      if (state.phase !== "reveal" || state.winner) return state;
+      return { ...state, phase: "vote", voteId: null, confirming: false };
     case "toLobby":
       return {
         ...createInitial(),
+        deckId: state.deckId || "standard",
         players: state.players.map((player) => ({ ...player, role: null, alive: true })),
         impostorCount: clampImpostors(state.impostorCount, state.players.length),
       };

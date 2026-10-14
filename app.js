@@ -1,4 +1,4 @@
-import { WORDS } from "./words.js";
+import { DECKS, WORDS } from "./words.js";
 import {
   TALK_MS,
   canStart,
@@ -31,7 +31,10 @@ function load() {
     if (!raw) return createInitial();
     const data = JSON.parse(raw);
     if (!data || !Array.isArray(data.players)) return createInitial();
-    return { ...createInitial(), ...data, players: data.players, eliminated: data.eliminated || [] };
+    let deckId = data.deckId || "standard";
+    if (deckId === "test") deckId = "custom";
+    if (!DECKS[deckId]) deckId = "standard";
+    return { ...createInitial(), ...data, deckId, players: data.players, eliminated: data.eliminated || [] };
   } catch {
     return createInitial();
   }
@@ -63,14 +66,25 @@ function dispatch(action) {
 }
 
 function pickWord() {
+  const currentDeckId = state.deckId || "standard";
+  const deck = DECKS[currentDeckId] || DECKS.standard;
+  const wordList = deck.words && deck.words.length ? deck.words : WORDS;
+
   let recent = [];
-  try { recent = JSON.parse(localStorage.getItem("el-impostor-pages-recent") || "[]"); } catch { recent = []; }
+  const storageKey = `el-impostor-pages-recent-${currentDeckId}`;
+  try { recent = JSON.parse(localStorage.getItem(storageKey) || "[]"); } catch { recent = []; }
   const skip = new Set(recent);
-  const pool = WORDS.filter((entry) => !skip.has(entry.word));
-  const list = pool.length ? pool : WORDS;
+  const pool = wordList.filter((entry) => !skip.has(entry.word));
+  const list = pool.length ? pool : wordList;
   const entry = list[Math.floor(Math.random() * list.length)];
-  localStorage.setItem("el-impostor-pages-recent", JSON.stringify([entry.word, ...recent.filter((word) => word !== entry.word)].slice(0, 80)));
-  return entry;
+  localStorage.setItem(storageKey, JSON.stringify([entry.word, ...recent.filter((word) => word !== entry.word)].slice(0, 80)));
+  
+  const hints = Array.isArray(entry.hints) && entry.hints.length
+    ? entry.hints
+    : (entry.hint ? [entry.hint] : ["Secreto"]);
+  const hint = hints[Math.floor(Math.random() * hints.length)];
+
+  return { word: entry.word, hint };
 }
 
 function deal() {
@@ -91,6 +105,8 @@ function addPlayer() {
   error = "";
   draft = "";
   dispatch({ type: "add", id: crypto.randomUUID(), name });
+  const input = root.querySelector("#name");
+  if (input) input.focus();
 }
 
 function setError(message) {
@@ -107,39 +123,79 @@ function render() {
   const canvas = document.querySelector("#confetti");
   canvas.style.display = "none";
   root.innerHTML = screen();
-  bind();
+  
+  const cardNode = root.querySelector("[data-card]");
+  if (cardNode) {
+    cardNode.addEventListener("pointerdown", onSwipeStart);
+  }
+
+  if (editId) {
+    const editInput = root.querySelector("[data-edit]");
+    if (editInput) {
+      editInput.focus();
+      editInput.select();
+    }
+  }
+
   if (state.winner === "innocents") burst();
-  if (state.phase === "countdown" || state.phase === "talk") clock();
+  if (state.phase === "countdown" || state.phase === "talk" || state.phase === "suspense") clock();
 }
 
 function screen() {
   if (state.phase === "lobby") return lobby();
-  if (state.phase === "cards") return state.passing ? pass() : card();
+  if (state.phase === "cards") return card();
   if (state.phase === "briefing") return briefing();
   if (state.phase === "countdown") return countdown();
   if (state.phase === "talk") return talk();
   if (state.phase === "vote") return vote();
+  if (state.phase === "suspense") return suspense();
   if (state.phase === "reveal") return reveal();
   return lobby();
 }
 
 function lobby() {
+  const currentDeckId = state.deckId || "standard";
+  const activeDeck = DECKS[currentDeckId] || DECKS.standard;
   const maxImp = maxImpostors(state.players.length);
   const reason = startBlockReason(state);
   const players = state.players.map((player, index) => {
     const editing = editId === player.id;
-    return `<li class="player">
+    return `<li class="player" data-player-id="${player.id}" data-index="${index}">
+      <button type="button" class="drag-handle" data-drag-handle aria-label="Arrastrar para mover">
+        <svg width="14" height="16" viewBox="0 0 14 16" fill="currentColor" aria-hidden="true">
+          <circle cx="3" cy="3" r="1.8"/>
+          <circle cx="11" cy="3" r="1.8"/>
+          <circle cx="3" cy="8" r="1.8"/>
+          <circle cx="11" cy="8" r="1.8"/>
+          <circle cx="3" cy="13" r="1.8"/>
+          <circle cx="11" cy="13" r="1.8"/>
+        </svg>
+      </button>
       <span class="seat">${index + 1}</span>
       ${editing
         ? `<input class="field" data-edit value="${esc(editDraft)}" maxlength="18" aria-label="Editar ${esc(player.name)}" />
            <button class="icon" data-save="${player.id}" aria-label="Guardar">✓</button>`
         : `<span class="name">${esc(player.name)}</span>
            <button class="icon" data-rename="${player.id}" aria-label="Editar ${esc(player.name)}">✎</button>`}
-      <button class="icon" data-move="${index}" data-dir="-1" ${index === 0 ? "disabled" : ""} aria-label="Subir">↑</button>
-      <button class="icon" data-move="${index}" data-dir="1" ${index === state.players.length - 1 ? "disabled" : ""} aria-label="Bajar">↓</button>
       <button class="icon" data-remove="${player.id}" aria-label="Borrar ${esc(player.name)}">✕</button>
     </li>`;
   }).join("");
+
+  const deckCards = Object.values(DECKS).map((deck) => {
+    const isSelected = deck.id === currentDeckId;
+    return `<button type="button" class="deck-card ${isSelected ? "selected" : ""}" data-set-deck="${deck.id}">
+      <div class="row" style="justify-content:space-between;width:100%">
+        <span class="deck-icon">${deck.icon}</span>
+        <span class="deck-badge ${isSelected ? "active" : ""}">${isSelected ? "✓ Activo" : deck.badge}</span>
+      </div>
+      <div class="deck-info">
+        <span class="deck-title">${esc(deck.name)}</span>
+        <span class="deck-count">${deck.words.length} palabras</span>
+      </div>
+      <p class="deck-desc">${esc(deck.description)}</p>
+    </button>`;
+  }).join("");
+
   const themeIcon = theme === "dark" ? "☀️" : "🌙";
   return `<button class="theme-toggle" data-theme aria-label="Cambiar tema">${themeIcon}</button>
     <header class="stack"><p class="eyebrow">Para la mesa</p><h1 style="font-size:3.2rem">El Impostor</h1><p class="lede">Una palabra. Una pantalla. Alguien miente. 🎭</p></header>
@@ -151,6 +207,15 @@ function lobby() {
     </form>
     ${players ? `<ul class="stack" style="list-style:none;padding:0;margin:0">${players}</ul>` : `<p class="panel mute">Sumá a quienes están sentados. Después van a ver su carta de a uno, sin que el resto mire.</p>`}
     <section class="panel stack">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="font-family:var(--display);font-size:1.4rem">Elegir mazo</h2>
+        <span class="tiny" style="color:var(--accent);font-weight:700">${activeDeck.words.length} palabras</span>
+      </div>
+      <div class="deck-grid">
+        ${deckCards}
+      </div>
+    </section>
+    <section class="panel stack">
       <h2 style="font-family:var(--display);font-size:1.4rem">Impostores al azar</h2>
       <p class="mute">${state.players.length < 3 ? "Con 3 o más jugadores se puede empezar." : `Con ${state.players.length} jugadores salen entre 1 y ${maxImp} impostores (aleatorio).`}</p>
       <p class="tiny">Siempre hay más inocentes que impostores. Los impostores ganan si quedan iguales. Los inocentes ganan si los sacan a todos.</p>
@@ -158,27 +223,61 @@ function lobby() {
     <div class="grow stack">
       ${reason ? `<p class="tiny">${esc(reason)}</p>` : ""}
       <button class="btn" data-deal ${canStart(state) ? "" : "disabled"}>Repartir cartas 🎲</button>
-      <p class="tiny">Mazo de ${WORDS.length} palabras</p>
+      <p class="tiny">Mazo ${esc(activeDeck.name)} · ${activeDeck.words.length} palabras</p>
     </div>`;
 }
 
 function pass() {
   const next = state.players[state.cardIndex + 1];
-  return `<header class="stack"><p class="eyebrow">Pasá el teléfono</p><h1 style="font-size:2.4rem">Ahora le toca a ${esc(next.name)}</h1><p class="lede">Cuando nadie más esté mirando, abrí la carta tapada.</p></header>
-    <div class="grow stack"><button class="btn" data-arm>Soy ${esc(next.name)}</button>${cancel()}</div>`;
+  return `<header class="stack"><p class="eyebrow">Pasá el teléfono</p><h1 style="font-size:2.4rem">Ahora le toca a ${esc(next?.name || "")}</h1><p class="lede">Cuando nadie más esté mirando, abrí la carta tapada.</p></header>
+    <div class="grow stack"><button class="btn" data-arm>Soy ${esc(next?.name || "")}</button>${cancel()}</div>`;
 }
 
 function card() {
   const player = state.players[state.cardIndex];
+  const isLast = state.cardIndex >= state.players.length - 1;
   const impostor = player.role === "impostor";
-  const face = cardOpen
-    ? impostor
-      ? `<div class="stack"><p class="secret blood">Impostor</p><p class="mute">No sabés la palabra. No digas esta pista tal cual.</p><h1 class="word gold">${esc(state.hint)}</h1></div>`
-      : `<div class="stack"><p class="secret">Inocente</p><p class="mute">La palabra es</p><h1 class="word">${esc(state.word)}</h1><p class="lede">Decí algo relacionado, sin dejarla servida.</p></div>`
-    : `<div class="stack"><span class="seal">EI</span><p class="eyebrow">Tu carta</p><h1 style="font-size:3rem">${esc(player.name)}</h1><p class="lede">Cuando nadie mire, deslizá hacia arriba.</p><span class="arrow" aria-hidden>↑</span></div>`;
+  const nextPlayer = !isLast ? state.players[state.cardIndex + 1] : null;
+
+  const secretContent = impostor
+    ? `<div class="stack">
+        <span class="role-badge blood">🎭 Impostor</span>
+        <p class="mute">No sabés la palabra. Tu pista es:</p>
+        <h1 class="word blood">${esc(state.hint)}</h1>
+        <p class="lede">No digas esta pista tal cual. Disimulá y escuchá al resto.</p>
+      </div>`
+    : `<div class="stack">
+        <span class="role-badge innocent">🛡️ Inocente</span>
+        <p class="mute">La palabra secreta es</p>
+        <h1 class="word innocent-word">${esc(state.word)}</h1>
+        <p class="lede">Decí algo relacionado, sin dejarla servida.</p>
+      </div>`;
+
+  const coverContent = `
+    <div class="stack">
+      <p class="eyebrow">Tu carta</p>
+      <h1 style="font-size:3.2rem">${esc(player.name)}</h1>
+      <p class="lede">Mantené presionado y deslizá hacia arriba para ver tu rol.</p>
+      <span class="arrow" aria-hidden>↑</span>
+    </div>`;
+
+  const nextBtnLabel = isLast
+    ? "Listo, empezar la ronda ➔"
+    : `Listo, pasar a ${esc(nextPlayer?.name || "siguiente")} ➔`;
+
+  const btnLabel = cardOpen
+    ? nextBtnLabel
+    : "Deslizá arriba para ver tu rol 🔒";
+
   return `<p class="eyebrow">Carta ${state.cardIndex + 1} de ${state.players.length}</p>
-    <div class="card ${cardOpen ? (impostor ? "impostor" : "innocent") : "back"}" data-card>${face}</div>
-    <div class="stack">${cardOpen ? `<button class="btn ${impostor ? "blood" : "paper"}" data-hide>Ocultar y pasar</button>` : `<button class="btn ghost" data-open>Revelar mi carta</button>`}${cancel()}</div>`;
+    <div class="card-wrap">
+      <div class="card secret-card">${secretContent}</div>
+      <div class="card cover-card back" data-card>${coverContent}</div>
+    </div>
+    <div class="stack">
+      <button class="btn paper ${cardOpen ? "" : "locked"}" data-hide ${cardOpen ? "" : "disabled"} data-next-label="${esc(nextBtnLabel)}">${btnLabel}</button>
+      ${cancel()}
+    </div>`;
 }
 
 function briefing() {
@@ -190,7 +289,14 @@ function briefing() {
 function countdown() {
   const started = state.countdownStartedAt || Date.now();
   const number = Math.max(1, 3 - Math.floor((Date.now() - started) / 1000));
-  return `<div class="center stack" style="margin:auto"><p class="eyebrow">Empieza</p><h1 style="font-size:2.6rem">${esc(starterName())}</h1><p class="count" data-count>${number}</p></div>`;
+  return `<div class="countdown-overlay">
+    <div class="countdown-card">
+      <p class="eyebrow" style="letter-spacing:0.18em">Empieza hablando</p>
+      <h1 class="countdown-starter">${esc(starterName())}</h1>
+      <p class="count pulse" data-count>${number}</p>
+      <p class="tiny" style="letter-spacing:0.06em">¡Abran bien los oídos!</p>
+    </div>
+  </div>`;
 }
 
 function talk() {
@@ -219,19 +325,83 @@ function vote() {
     <div class="stack">${choices}</div><div class="grow stack">${confirm}<button class="btn ghost" data-backtalk>Volver a la ronda</button></div>`;
 }
 
+function suspense() {
+  const target = state.players.find((player) => player.id === state.voteId);
+  const started = state.suspenseStartedAt || Date.now();
+  const number = Math.max(1, 3 - Math.floor((Date.now() - started) / 1000));
+  return `<div class="countdown-overlay">
+    <div class="countdown-card">
+      <p class="eyebrow" style="letter-spacing:0.18em">Revelando identidad...</p>
+      <p class="mute" style="font-size:0.95rem;margin-bottom:-0.3rem">Se votó a</p>
+      <h1 class="countdown-starter">${esc(target?.name || "Jugador")}</h1>
+      <p class="count pulse" data-suspense-count>${number}</p>
+      <p class="tiny" style="letter-spacing:0.06em">¿Será impostor o inocente?</p>
+    </div>
+  </div>`;
+}
+
 function reveal() {
   const last = state.eliminated[state.eliminated.length - 1];
   const impostor = last?.role === "impostor";
-  let outcome = "";
-  if (state.winner === "innocents") outcome = `<div class="center"><p class="word gold">¡Los inocentes ganan!</p><p class="lede">No quedó ningún impostor en la sala.</p></div>`;
-  else if (state.winner === "impostors") outcome = `<div class="center"><p class="word blood">Los impostores ganan</p><p class="lede">Quedaron la misma cantidad de impostores que de inocentes.</p></div>`;
-  else if (impostor) outcome = `<p class="center">Aún hay impostores en la sala.</p>`;
-  else outcome = `<p class="center">${esc(last?.name || "Alguien")} era inocente.</p>`;
-  const word = state.winner && state.word ? `<div class="paper"><p class="secret">La palabra era</p><p class="word">${esc(state.word)}</p></div>` : "";
-  return `<header class="stack"><p class="eyebrow">Resultado</p><h1 style="font-size:2.6rem">${esc(last?.name || "")}</h1><p class="lede">${impostor ? "Era impostor" : "Era inocente"}</p></header>
-    ${outcome}
-    ${word}
-    <div class="grow">${state.winner ? `<button class="btn" data-lobby>Otra partida</button>` : `<button class="btn" data-next>Siguiente ronda</button>`}</div>`;
+  const aliveImpostors = state.players.filter((p) => p.alive && p.role === "impostor").length;
+  const aliveInnocents = state.players.filter((p) => p.alive && p.role === "innocent").length;
+  const totalAlive = aliveImpostors + aliveInnocents;
+
+  const roleBadge = impostor
+    ? `<span class="role-badge blood" style="font-size:1.05rem;padding:0.45rem 1.25rem">🎭 Era Impostor</span>`
+    : `<span class="role-badge innocent" style="font-size:1.05rem;padding:0.45rem 1.25rem">🛡️ Era Inocente</span>`;
+
+  let outcomeHtml = "";
+  if (state.winner === "innocents") {
+    outcomeHtml = `<div class="reveal-banner gold-banner">
+      <p class="reveal-result-title gold">🏆 ¡Los inocentes ganan!</p>
+      <p class="mute">Descubrieron a todos los impostores de la sala.</p>
+    </div>`;
+  } else if (state.winner === "impostors") {
+    outcomeHtml = `<div class="reveal-banner blood-banner">
+      <p class="reveal-result-title blood">💀 Los impostores ganan</p>
+      <p class="mute">Quedaron la misma cantidad de impostores que de inocentes.</p>
+    </div>`;
+  } else if (impostor) {
+    outcomeHtml = `<div class="reveal-banner ongoing-banner">
+      <p class="reveal-result-title blood">¡Acertaron! Era impostor 🎭</p>
+      <p class="reveal-sub"><strong>¡Ojo! Todavía quedan impostores en juego.</strong></p>
+      <p class="tiny" style="margin-top:0.35rem">Quedan ${totalAlive} jugadores en la mesa. ¡A no confiarse!</p>
+    </div>`;
+  } else {
+    outcomeHtml = `<div class="reveal-banner innocent-banner">
+      <p class="reveal-result-title blood">¡Se equivocaron! No era impostor 🛡️</p>
+      <p class="reveal-sub"><strong>¡Aún faltan impostores por descubrir!</strong></p>
+      <p class="tiny" style="margin-top:0.35rem">Sigue la partida entre los ${totalAlive} jugadores que quedan activos.</p>
+    </div>`;
+  }
+
+  const wordHtml = (state.winner && state.word)
+    ? `<div class="paper stack" style="margin-top:0.5rem">
+        <p class="secret">La palabra secreta era</p>
+        <p class="word gold" style="font-size:clamp(2rem, 7vw, 3rem)">${esc(state.word)}</p>
+      </div>`
+    : "";
+
+  const actionBtn = state.winner
+    ? `<button class="btn" data-lobby>Otra partida 🎲</button>`
+    : `<button class="btn paper" data-next>Siguiente ronda ➔</button>
+       <button class="btn ghost" data-revote style="font-weight:700">Hacer otra votación 🗳️</button>`;
+
+  return `<header class="stack">
+      <p class="eyebrow">Resultado de la votación</p>
+    </header>
+    <div class="reveal-card ${impostor ? "impostor-caught" : "innocent-lost"}">
+      <div class="stack" style="align-items:center;gap:0.85rem;width:100%">
+        ${roleBadge}
+        <h1 class="reveal-name">${esc(last?.name || "")}</h1>
+        ${outcomeHtml}
+      </div>
+    </div>
+    ${wordHtml}
+    <div class="grow stack" style="margin-top:0.5rem">
+      ${actionBtn}
+    </div>`;
 }
 
 function cancel() {
@@ -239,16 +409,8 @@ function cancel() {
   return `<div class="panel stack"><p class="mute">¿Volver a la mesa? Se borran los roles de esta partida.</p><div class="row"><button class="btn ghost" data-keep>Seguir</button><button class="btn blood" data-lobby>Sí, cancelar</button></div></div>`;
 }
 
-function bind() {
-  const form = root.querySelector("[data-add]");
-  const input = root.querySelector("#name");
-  if (form && input) {
-    input.addEventListener("input", () => { draft = input.value; });
-    form.addEventListener("submit", (event) => { event.preventDefault(); addPlayer(); });
-  }
-  root.querySelector("[data-edit]")?.addEventListener("input", (event) => { editDraft = event.target.value; });
-  root.querySelector("[data-card]")?.addEventListener("pointerdown", onSwipeStart);
-  on(root, "click", (event) => {
+function initEvents() {
+  root.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
     if (target.dataset.deal != null) deal();
@@ -259,15 +421,29 @@ function bind() {
       render();
     }
     if (target.dataset.remove) dispatch({ type: "remove", id: target.dataset.remove });
-    if (target.dataset.move) dispatch({ type: "move", index: Number(target.dataset.move), dir: Number(target.dataset.dir) });
-    if (target.dataset.rename) { editId = target.dataset.rename; editDraft = state.players.find((player) => player.id === editId)?.name || ""; render(); }
+    if (target.dataset.rename) {
+      editId = target.dataset.rename;
+      editDraft = state.players.find((player) => player.id === editId)?.name || "";
+      render();
+    }
     if (target.dataset.save) {
-      dispatch({ type: "rename", id: target.dataset.save, name: editDraft });
+      if (editDraft.trim()) {
+        dispatch({ type: "rename", id: target.dataset.save, name: editDraft });
+      }
       editId = null;
       render();
     }
-    if (target.dataset.open != null) cardOpen = true, render();
-    if (target.dataset.hide != null) dispatch({ type: "hideCard" });
+    if (target.dataset.hide != null) {
+      const wrap = root.querySelector(".card-wrap");
+      if (wrap) {
+        wrap.classList.add("exiting");
+        setTimeout(() => {
+          dispatch({ type: "hideCard", now: Date.now() });
+        }, 160);
+      } else {
+        dispatch({ type: "hideCard", now: Date.now() });
+      }
+    }
     if (target.dataset.arm != null) dispatch({ type: "armNext" });
     if (target.dataset.reroll != null) {
       const pool = state.players.filter((player) => player.id !== state.starterId);
@@ -279,36 +455,212 @@ function bind() {
     if (target.dataset.pick) dispatch({ type: "selectVote", id: target.dataset.pick });
     if (target.dataset.ask != null) dispatch({ type: "askConfirm" });
     if (target.dataset.backconfirm != null) dispatch({ type: "cancelConfirm" });
-    if (target.dataset.eliminate != null) dispatch({ type: "confirmEliminate" });
+    if (target.dataset.eliminate != null) dispatch({ type: "beginSuspense", now: Date.now() });
     if (target.dataset.backtalk != null) dispatch({ type: "backToTalk" });
     if (target.dataset.next != null) dispatch({ type: "nextRound", now: Date.now() });
+    if (target.dataset.revote != null) dispatch({ type: "voteAgain" });
+    if (target.dataset.setDeck) dispatch({ type: "setDeck", deckId: target.dataset.setDeck });
     if (target.dataset.lobby != null) { editId = null; dispatch({ type: "toLobby" }); }
     if (target.dataset.cancel != null) { cancelAsk = true; render(); }
     if (target.dataset.keep != null) { cancelAsk = false; render(); }
+  });
+
+  root.addEventListener("submit", (event) => {
+    if (event.target.matches("[data-add]")) {
+      event.preventDefault();
+      addPlayer();
+    }
+  });
+
+  root.addEventListener("input", (event) => {
+    if (event.target.id === "name") {
+      draft = event.target.value;
+    } else if (event.target.matches("[data-edit]")) {
+      editDraft = event.target.value;
+    }
+  });
+
+  root.addEventListener("keydown", (event) => {
+    if (event.target.matches("[data-edit]")) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (editId && editDraft.trim()) {
+          dispatch({ type: "rename", id: editId, name: editDraft });
+        }
+        editId = null;
+        render();
+      } else if (event.key === "Escape") {
+        editId = null;
+        render();
+      }
+    }
+  });
+  setupDragEvents();
+}
+
+let draggingPlayerId = null;
+
+function setupDragEvents() {
+  root.addEventListener("pointerdown", (event) => {
+    const handle = event.target.closest("[data-drag-handle]");
+    if (!handle) return;
+    const item = handle.closest(".player");
+    if (!item) return;
+    if (editId) return;
+
+    const allItems = Array.from(root.querySelectorAll(".player"));
+    if (allItems.length < 2) return;
+
+    event.preventDefault();
+    try { handle.setPointerCapture?.(event.pointerId); } catch { /* ignore */ }
+
+    draggingPlayerId = item.dataset.playerId;
+    const fromIndex = allItems.indexOf(item);
+    if (fromIndex === -1) return;
+
+    let currentIndex = fromIndex;
+    const startY = event.clientY;
+
+    const r0 = allItems[0].getBoundingClientRect();
+    const r1 = allItems[1].getBoundingClientRect();
+    const itemHeight = r1.top - r0.top;
+
+    item.classList.add("dragging");
+    item.style.zIndex = "100";
+    item.style.transition = "none";
+    item.style.pointerEvents = "none";
+
+    allItems.forEach((el) => {
+      if (el !== item) {
+        el.style.transition = "transform 0.22s cubic-bezier(0.2, 0, 0, 1)";
+      }
+    });
+
+    const onPointerMove = (e) => {
+      if (!draggingPlayerId) return;
+      const deltaY = e.clientY - startY;
+
+      // Elemento arrastrado sigue suavemente al cursor
+      item.style.transform = `translateY(${deltaY}px) scale(1.03) rotate(0.6deg)`;
+
+      // Cálculo de la posición destino
+      const rawOffset = Math.round(deltaY / itemHeight);
+      const targetIndex = Math.max(0, Math.min(allItems.length - 1, fromIndex + rawOffset));
+
+      if (targetIndex !== currentIndex) {
+        currentIndex = targetIndex;
+
+        // Desplazamiento animado de los otros elementos para abrir paso
+        allItems.forEach((el, i) => {
+          if (i === fromIndex) return;
+          if (fromIndex < currentIndex) {
+            if (i > fromIndex && i <= currentIndex) {
+              el.style.transform = `translateY(-${itemHeight}px)`;
+            } else {
+              el.style.transform = "";
+            }
+          } else if (fromIndex > currentIndex) {
+            if (i >= currentIndex && i < fromIndex) {
+              el.style.transform = `translateY(${itemHeight}px)`;
+            } else {
+              el.style.transform = "";
+            }
+          } else {
+            el.style.transform = "";
+          }
+        });
+      }
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+
+      if (!draggingPlayerId) return;
+
+      // Animación de encaje al soltar
+      const finalOffset = (currentIndex - fromIndex) * itemHeight;
+      item.style.transition = "transform 0.18s cubic-bezier(0.2, 0, 0, 1)";
+      item.style.transform = `translateY(${finalOffset}px) scale(1)`;
+
+      setTimeout(() => {
+        allItems.forEach((el) => {
+          el.style.transform = "";
+          el.style.transition = "";
+          el.style.zIndex = "";
+          el.style.pointerEvents = "";
+          el.classList.remove("dragging");
+        });
+
+        const movedFrom = fromIndex;
+        const movedTo = currentIndex;
+        draggingPlayerId = null;
+
+        if (movedFrom !== movedTo) {
+          dispatch({ type: "reorder", from: movedFrom, to: movedTo });
+        }
+      }, 180);
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
   });
 }
 
 let swipeY = 0;
 let swiping = false;
+let currentCardNode = null;
+
 function onSwipeStart(event) {
-  if (cardOpen) return;
   swiping = true;
   swipeY = event.clientY;
-  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* ignore */ }
-  event.currentTarget.addEventListener("pointermove", onSwipeMove);
-  event.currentTarget.addEventListener("pointerup", onSwipeEnd, { once: true });
+  currentCardNode = event.currentTarget;
+  currentCardNode.style.transition = "none";
+  try { currentCardNode.setPointerCapture?.(event.pointerId); } catch { /* ignore */ }
+  currentCardNode.addEventListener("pointermove", onSwipeMove);
+  currentCardNode.addEventListener("pointerup", onSwipeEnd, { once: true });
+  currentCardNode.addEventListener("pointercancel", onSwipeCancel, { once: true });
 }
+
 function onSwipeMove(event) {
-  if (!swiping) return;
+  if (!swiping || !currentCardNode) return;
   const delta = Math.min(0, event.clientY - swipeY);
-  event.currentTarget.style.transform = `translateY(${delta}px)`;
-  event.currentTarget.dataset.delta = String(delta);
+  const clamped = Math.max(-330, delta);
+  currentCardNode.style.transform = `translateY(${clamped}px)`;
+
+  // Desbloqueo dinámico de la carta cuando se levanta al menos 110px
+  if (delta < -110 && !cardOpen) {
+    cardOpen = true;
+    const hideBtn = root.querySelector("[data-hide]");
+    if (hideBtn) {
+      hideBtn.disabled = false;
+      hideBtn.classList.remove("locked");
+      const nextLabel = hideBtn.dataset.nextLabel;
+      if (nextLabel) hideBtn.textContent = nextLabel;
+    }
+  }
 }
-function onSwipeEnd(event) {
+
+function onSwipeEnd() {
+  if (!currentCardNode) return;
   swiping = false;
-  const delta = Number(event.currentTarget.dataset.delta || 0);
-  event.currentTarget.style.transform = "";
-  if (delta < -96) { cardOpen = true; render(); }
+  const node = currentCardNode;
+  currentCardNode = null;
+  node.removeEventListener("pointermove", onSwipeMove);
+  node.style.transition = "transform 0.28s cubic-bezier(0.2, 0.95, 0.3, 1)";
+  node.style.transform = "translateY(0px)";
+}
+
+function onSwipeCancel() {
+  if (!currentCardNode) return;
+  swiping = false;
+  const node = currentCardNode;
+  currentCardNode = null;
+  node.removeEventListener("pointermove", onSwipeMove);
+  node.style.transition = "transform 0.28s cubic-bezier(0.2, 0.95, 0.3, 1)";
+  node.style.transform = "translateY(0px)";
 }
 
 function clock() {
@@ -316,9 +668,32 @@ function clock() {
     if (state.phase === "countdown") {
       const started = state.countdownStartedAt || Date.now();
       const number = 3 - Math.floor((Date.now() - started) / 1000);
-      if (number <= 0) { dispatch({ type: "beginTalk", now: Date.now() }); return; }
+      if (number <= 0) {
+        dispatch({ type: "beginTalk", now: Date.now() });
+        return;
+      }
       const node = root.querySelector("[data-count]");
-      if (node) node.textContent = String(number);
+      if (node && node.textContent !== String(number)) {
+        node.textContent = String(number);
+        node.classList.remove("pulse");
+        void node.offsetWidth;
+        node.classList.add("pulse");
+      }
+    }
+    if (state.phase === "suspense") {
+      const started = state.suspenseStartedAt || Date.now();
+      const number = 3 - Math.floor((Date.now() - started) / 1000);
+      if (number <= 0) {
+        dispatch({ type: "confirmEliminate" });
+        return;
+      }
+      const node = root.querySelector("[data-suspense-count]");
+      if (node && node.textContent !== String(number)) {
+        node.textContent = String(number);
+        node.classList.remove("pulse");
+        void node.offsetWidth;
+        node.classList.add("pulse");
+      }
     }
     if (state.phase === "talk") {
       const remaining = Math.max(0, TALK_MS - (Date.now() - (state.talkStartedAt || Date.now())));
@@ -326,14 +701,18 @@ function clock() {
       const bar = root.querySelector("[data-bar]");
       if (node) node.textContent = formatTime(remaining);
       if (bar) bar.style.width = `${(remaining / TALK_MS) * 100}%`;
-      if (remaining === 0 && node && !node.classList.contains("blood")) render();
+      if (remaining === 0) {
+        if (node && !node.classList.contains("blood")) {
+          node.classList.add("blood");
+          render();
+        }
+        return;
+      }
     }
     frame = requestAnimationFrame(loop);
   };
   frame = requestAnimationFrame(loop);
 }
-
-function on(node, type, handler) { node.addEventListener(type, handler); }
 
 function burst() {
   const canvas = document.querySelector("#confetti");
@@ -385,4 +764,5 @@ function burst() {
   requestAnimationFrame(draw);
 }
 
+initEvents();
 render();
