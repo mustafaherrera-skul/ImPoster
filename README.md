@@ -12,13 +12,31 @@ Juego de mesa para un solo teléfono. Los inocentes ven la palabra. El impostor 
 
 No hace falta servidor, base de datos ni cuenta. Todo pasa en el navegador.
 
+## Novedades: Salas y Sistema de Puntuaciones 🏆
+
+- **Salas de Juego Independientes**: Podés crear diferentes salas (ej: *"Los Pibes"*, *"Familia"*, *"Oficina"*) con sus propios grupos de jugadores y estadísticas acumuladas.
+- **Puntuaciones Acumuladas**: Los puntos se van sumando a lo largo de las partidas y se guardan automáticamente en el navegador.
+- **Leaderboard Post-Partida Animado**:
+  1. Muestra la tabla tal cual estaba antes de la partida.
+  2. Revela los nuevos puntos con un contador ascendente y badges energéticos.
+  3. Si un jugador supera a otro en el ranking, las filas se reordenan dinámicamente con una animación fluida (`▲ +X puestos`), iluminando al nuevo líder con confeti.
+- **Criterio de Puntos**:
+  - **Inocente Ganador**: **+120 pts** si sobrevivió (**+70 pts** si fue eliminado antes pero su equipo ganó).
+  - **Impostor Ganador**: **+260 pts** (¡vale más del doble que ganar como inocente!).
+  - **Supervivencia del Impostor**:
+    - Si lo descubren en la 1ª ronda: **0 pts** de supervivencia.
+    - Si sobrevive a la 1ª ronda y cae en la 2ª: **+50 pts**.
+    - Rondas posteriores: **+50 pts** por cada ronda adicional sobrevivida.
+    - Infiltración perfecta (gana sin ser descubierto): **+120 pts** extra.
+  - **Premio Consuelo**: **+20 pts** para los inocentes si ganan los impostores.
+
 ## Cómo se juega
 
-1. Cargá los nombres en el orden de la mesa. Podés editarlos, borrarlos o cambiarles el orden antes de empezar.
-2. Los impostores se eligen **al azar** (entre 1 y el máximo posible según la cantidad de jugadores, siempre con más inocentes que impostores).
+1. Elegí o creá una sala para tu grupo. Cargá los nombres en el orden de la mesa.
+2. Los impostores se eligen **al azar** (entre 1 y el máximo posible según la cantidad de jugadores).
 3. Cada jugador desliza su carta hacia arriba cuando nadie mira.
 4. Después de la cuenta regresiva, hay dos minutos de referencia para decir palabras relacionadas.
 5. Voten en voz alta. En la página solo se toca a quien tuvo más votos.
-6. Si sacan al último impostor, ganan los inocentes (¡con confeti!). Si quedan tantos impostores como inocentes, ganan los impostores.
+6. Al finalizar la partida, pasá a la **Tabla de Posiciones** para ver la animación de puntos y quién lidera el podio.
 
 Tema oscuro por defecto, con botón para pasar a modo claro.

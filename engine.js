@@ -21,6 +21,7 @@ export function createInitial() {
     eliminated: [],
     winner: null,
     impostorsRemain: false,
+    matchId: null,
   };
 }
 
@@ -153,6 +154,7 @@ export function reducer(state, action) {
         word: action.word,
         hint: action.hint,
         starterId: action.starterId,
+        matchId: action.matchId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "m_" + Date.now()),
         round: 1,
       };
     }
@@ -217,7 +219,7 @@ export function reducer(state, action) {
         confirming: false,
         voteId: null,
         suspenseStartedAt: null,
-        eliminated: [...state.eliminated, { id: target.id, name: target.name, role: target.role }],
+        eliminated: [...state.eliminated, { id: target.id, name: target.name, role: target.role, round: state.round }],
         winner,
         impostorsRemain: winner === null && target.role === "impostor",
       };
@@ -244,6 +246,8 @@ export function reducer(state, action) {
     case "voteAgain":
       if (state.phase !== "reveal" || state.winner) return state;
       return { ...state, phase: "vote", voteId: null, confirming: false };
+    case "toLeaderboard":
+      return { ...state, phase: "leaderboard" };
     case "toLobby":
       return {
         ...createInitial(),
@@ -254,4 +258,77 @@ export function reducer(state, action) {
     default:
       return state;
   }
+}
+
+export function calculateGameScores(state) {
+  if (!state.winner) return {};
+  const scores = {};
+
+  state.players.forEach((player) => {
+    const elimRecord = state.eliminated.find((e) => e.id === player.id);
+    const wasEliminated = !!elimRecord;
+    const elimRound = elimRecord ? elimRecord.round || 1 : null;
+    const isImpostor = player.role === "impostor";
+    const breakdown = [];
+
+    if (state.winner === "innocents") {
+      if (!isImpostor) {
+        if (!wasEliminated) {
+          breakdown.push({ label: "Victoria Inocente", pts: 120 });
+        } else {
+          breakdown.push({ label: "Victoria de equipo (sacrificio)", pts: 70 });
+        }
+      } else {
+        // Impostor perdió
+        if (wasEliminated) {
+          if (elimRound <= 1) {
+            breakdown.push({ label: "Eliminado en 1ª ronda", pts: 0 });
+          } else {
+            const survivalRounds = elimRound - 1;
+            const survivalPts = survivalRounds * 50;
+            breakdown.push({
+              label: `Sobrevivió ${survivalRounds} ronda${survivalRounds > 1 ? "s" : ""}`,
+              pts: survivalPts,
+            });
+          }
+        } else {
+          breakdown.push({ label: "Sobrevivió hasta el final", pts: 100 });
+        }
+      }
+    } else if (state.winner === "impostors") {
+      if (isImpostor) {
+        breakdown.push({ label: "Victoria Impostor 🎭", pts: 260 });
+        if (!wasEliminated) {
+          breakdown.push({ label: "Infiltración perfecta (no detectado)", pts: 120 });
+        } else {
+          if (elimRound <= 1) {
+            breakdown.push({ label: "Eliminado en 1ª ronda", pts: 0 });
+          } else {
+            const survivalRounds = elimRound - 1;
+            const survivalPts = survivalRounds * 50;
+            breakdown.push({
+              label: `Sobrevivió ${survivalRounds} ronda${survivalRounds > 1 ? "s" : ""}`,
+              pts: survivalPts,
+            });
+          }
+        }
+      } else {
+        // Inocente perdió
+        breakdown.push({ label: "Premio consuelo / Participación", pts: 20 });
+      }
+    }
+
+    const total = breakdown.reduce((sum, item) => sum + item.pts, 0);
+    scores[player.id] = {
+      playerId: player.id,
+      name: player.name,
+      role: player.role,
+      wasEliminated,
+      elimRound,
+      total,
+      breakdown,
+    };
+  });
+
+  return scores;
 }
