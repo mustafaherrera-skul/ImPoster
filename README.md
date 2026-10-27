@@ -12,10 +12,13 @@ Juego de mesa para un solo teléfono. Los inocentes ven la palabra. El impostor 
 
 No hace falta servidor, base de datos ni cuenta. Todo pasa en el navegador.
 
-## Novedades: Salas y Sistema de Puntuaciones 🏆
+## Sistema de Torneo y Puntuaciones 🏆
 
-- **Salas de Juego Independientes**: Podés crear diferentes salas (ej: *"Los Pibes"*, *"Familia"*, *"Oficina"*) con sus propios grupos de jugadores y estadísticas acumuladas.
 - **Puntuaciones Acumuladas**: Los puntos se van sumando a lo largo de las partidas y se guardan automáticamente en el navegador.
+- **Configuración de Impostores**: Podés elegir si la cantidad de impostores es **al azar** (entre 1 y el máximo) o **fija/manual** (1, 2, etc.).
+- **Finalización de Torneo & Reinicio de Puntos**:
+  - Botón **"🏆 Terminar Torneo"** en la tabla de posiciones: corona al campeón del torneo con podio (1°, 2° y 3° puesto), confeti y estadísticas. Permite iniciar un nuevo torneo volviendo los puntos a 0.
+  - Botón **"↺ Reiniciar Puntos"**: para resetear las puntuaciones a 0 en cualquier momento sin necesidad de terminar el juego.
 - **Leaderboard Post-Partida Animado**:
   1. Muestra la tabla tal cual estaba antes de la partida.
   2. Revela los nuevos puntos con un contador ascendente y badges energéticos.
@@ -27,15 +30,15 @@ No hace falta servidor, base de datos ni cuenta. Todo pasa en el navegador.
     - Si lo descubren en la 1ª ronda: **0 pts** de supervivencia.
     - Si sobrevive a la 1ª ronda y cae en la 2ª: **+50 pts**.
     - Rondas posteriores: **+50 pts** por cada ronda adicional sobrevivida.
-    - Infiltración perfecta (gana sin ser descubierto): **+120 pts** extra.
+    - Infiltración perfecta: **+120 pts** extra (aplica únicamente si hubo 2 o más impostores en juego).
   - **Premio Consuelo**: **+20 pts** para los inocentes si ganan los impostores.
 
 ## Cómo se juega
 
-1. Elegí o creá una sala para tu grupo. Cargá los nombres en el orden de la mesa.
-2. Los impostores se eligen **al azar** (entre 1 y el máximo posible según la cantidad de jugadores).
+1. Cargá los nombres de los jugadores en el orden de la mesa.
+2. Elegí el modo de impostores: aleatorio o cantidad fija manual.
 3. Cada jugador desliza su carta hacia arriba cuando nadie mira.
-4. Después de la cuenta regresiva, hay dos minutos de referencia para decir palabras relacionadas.
+4. Después de la cuenta regresiva, hay dos minutos de referencia con el orden de oradores visible en pantalla.
 5. Voten en voz alta. En la página solo se toca a quien tuvo más votos.
 6. Al finalizar la partida, pasá a la **Tabla de Posiciones** para ver la animación de puntos y quién lidera el podio.
 
@@ -43,12 +46,21 @@ Tema oscuro por defecto, con botón para pasar a modo claro.
 
 ---
 
-## COSAS PARA AGREGAR / MODIFICAR:
+## PRÓXIMAS COSAS PARA AGREGAR:
 
-- Poder elegir si la cantidad de impostores sea random o elegida manualmente
-- Poder terminar el torneo y que salga el ganador. Tmb opción para resetear los puntos
-- Arreglar estilo en modo claro, en zona de votación (los nombres estan en blanco)
-- Aumentar la fuente en textos que estan muy chicos (por ej: en la pantalla del temporizador 2 mins)
-- No hay favicon, o al menos no carga
-- Mejorar suma de puntaje de impostores: si hay solo 1 impostor que no sume infiltración perfecta, ya que eso sucede si o si, y terminan siendo 380pts
-- Que funcione el sistema de salas, no funciona nada, no puedo ni crear ni modificar ni siquiera anda la X para sacar la ventana
+- Añadir una pequeña probabilidad a un nuevo modo: modo caos. En este modo, la partida va a ser modificada de forma rara (sin que los jugadores sepan, ellos van a pensar de que es partida normal), algún ejemplo seria:
+
+  1. Todos impostores (con sus variantes):
+    - que a algunos no les salga pista y a otros les salga una pista
+    - que a todos le salga pista
+
+  2. Que a todos les salga la misma palabra, pero a unos les salga como pista y a otros como palabra de inocente
+
+  3. Todos inocentes pero con palabras distintas
+
+  4. Todos inocentes sin impostor
+
+  5. TIRAME IDEAS Y TE DIGO SI ESTAN BUENAS PARA METERLAS O NO
+
+Fijate de que sea una opción que se pueda desactivar, y por ahora deja una opcion para que salga todo el rato, para testear
+

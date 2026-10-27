@@ -13,14 +13,17 @@ import {
   calculateGameScores,
 } from "./engine.js";
 
-const KEY_ROOMS = "el-impostor-rooms-v2";
-const KEY_ACTIVE_ROOM = "el-impostor-active-room-v2";
+const KEY_PLAYERS = "el-impostor-players-v3";
+const KEY_TOURNAMENT = "el-impostor-tournament-v3";
+const KEY_IMPOSTOR_CFG = "el-impostor-config-v3";
 const KEY_LEGACY = "el-impostor-pages-v1";
+const KEY_ROOMS_OLD = "el-impostor-rooms-v2";
 const root = document.querySelector("#app");
 
-// Inicialización de salas
-let rooms = loadRooms();
-let activeRoomId = loadActiveRoomId(rooms);
+// Inicialización de estado y persistencia (sin salas, jugadores directos)
+let players = loadPlayers();
+let tournamentStats = loadTournamentStats();
+let impostorConfig = loadImpostorConfig();
 let state = loadGameState();
 
 // Estados de interfaz y modales
@@ -31,42 +34,51 @@ let error = "";
 let cardOpen = false;
 let cancelAsk = false;
 let frame = 0;
-let showRoomsModal = false;
 let showLeaderboardModal = false;
+let showTournamentWinner = false;
+let showResetConfirm = false;
 let showBreakdown = false;
-let newRoomDraft = "";
-let editingRoomId = null;
-let editingRoomDraft = "";
 let leaderboardAnimTimer = null;
 let leaderboardAnimPlayed = false;
-let animStage = "idle"; // "before" | "awarding" | "overtaking" | "final"
 let theme = localStorage.getItem("el-impostor-theme") || "dark";
 document.documentElement.setAttribute("data-theme", theme);
 
 // ==========================================================================
-// GESTIÓN DE SALAS Y PERSISTENCIA
+// GESTIÓN DE JUGADORES Y TORNEO
 // ==========================================================================
 
-function loadRooms() {
+function loadPlayers() {
   try {
-    const raw = localStorage.getItem(KEY_ROOMS);
+    const raw = localStorage.getItem(KEY_PLAYERS);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
-  } catch {
-    /* fallback */
-  }
+  } catch { }
 
-  // Migración desde versión anterior si existía
-  let initialPlayers = [];
+  // Migración desde versión anterior de salas si existía
+  try {
+    const roomsRaw = localStorage.getItem(KEY_ROOMS_OLD);
+    if (roomsRaw) {
+      const parsedRooms = JSON.parse(roomsRaw);
+      if (Array.isArray(parsedRooms) && parsedRooms.length > 0) {
+        const firstWithPlayers = parsedRooms.find((r) => r.players && r.players.length > 0) || parsedRooms[0];
+        if (firstWithPlayers?.players?.length > 0) {
+          savePlayers(firstWithPlayers.players);
+          return firstWithPlayers.players;
+        }
+      }
+    }
+  } catch { }
+
+  // Migración desde versión legacy si existía
   try {
     const legacyRaw = localStorage.getItem(KEY_LEGACY);
     if (legacyRaw) {
       const legacyData = JSON.parse(legacyRaw);
       if (Array.isArray(legacyData?.players) && legacyData.players.length > 0) {
-        initialPlayers = legacyData.players.map((p) => ({
-          id: p.id || crypto.randomUUID(),
+        const initial = legacyData.players.map((p) => ({
+          id: p.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "p_" + Date.now()),
           name: p.name,
           score: 0,
           gamesPlayed: 0,
@@ -74,138 +86,125 @@ function loadRooms() {
           impostorWins: 0,
           innocentWins: 0,
         }));
+        savePlayers(initial);
+        return initial;
       }
     }
-  } catch {
-    /* ignore */
-  }
+  } catch { }
 
-  const defaultRoom = {
-    id: "room-default",
-    name: "Mesa Principal",
-    code: "SALA-1",
-    createdAt: Date.now(),
-    gamesCount: 0,
-    players: initialPlayers,
-    lastGameResults: null,
-    lastAwardedMatchId: null,
-  };
-
-  const roomsList = [defaultRoom];
-  saveRooms(roomsList);
-  return roomsList;
+  return [];
 }
 
-function loadActiveRoomId(availableRooms) {
-  const saved = localStorage.getItem(KEY_ACTIVE_ROOM);
-  if (saved && availableRooms.some((r) => r.id === saved)) {
-    return saved;
-  }
-  return availableRooms[0]?.id || "room-default";
-}
-
-function saveRooms(customList) {
-  const toSave = customList || rooms;
+function savePlayers(customList) {
+  const toSave = customList || players;
   try {
-    localStorage.setItem(KEY_ROOMS, JSON.stringify(toSave));
+    localStorage.setItem(KEY_PLAYERS, JSON.stringify(toSave));
   } catch (err) {
-    console.error("Error guardando salas:", err);
+    console.error("Error guardando jugadores:", err);
   }
 }
 
-function getActiveRoom() {
-  let room = rooms.find((r) => r.id === activeRoomId);
-  if (!room) {
-    room = rooms[0];
-    if (room) {
-      activeRoomId = room.id;
-      localStorage.setItem(KEY_ACTIVE_ROOM, activeRoomId);
-    }
-  }
-  return room;
-}
-
-function createRoom(name) {
-  const cleanName = normalizeName(name) || `Sala ${rooms.length + 1}`;
-  const id = "room-" + (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now());
-  const code = "SALA-" + Math.floor(100 + Math.random() * 900);
-  const newRoom = {
-    id,
-    name: cleanName,
-    code,
-    createdAt: Date.now(),
+function loadTournamentStats() {
+  try {
+    const raw = localStorage.getItem(KEY_TOURNAMENT);
+    if (raw) return JSON.parse(raw);
+  } catch { }
+  return {
     gamesCount: 0,
-    players: [],
-    lastGameResults: null,
     lastAwardedMatchId: null,
+    lastGameResults: null,
   };
-  rooms.push(newRoom);
-  saveRooms();
-  switchRoom(id);
 }
 
-function renameRoom(roomId, newName) {
-  const clean = normalizeName(newName);
-  if (!clean) return;
-  const room = rooms.find((r) => r.id === roomId);
-  if (room) {
-    room.name = clean;
-    saveRooms();
-    render();
+function saveTournamentStats() {
+  try {
+    localStorage.setItem(KEY_TOURNAMENT, JSON.stringify(tournamentStats));
+  } catch (err) {
+    console.error("Error guardando estadísticas de torneo:", err);
   }
 }
 
-function deleteRoom(roomId) {
-  if (rooms.length <= 1) return;
-  rooms = rooms.filter((r) => r.id !== roomId);
-  if (activeRoomId === roomId) {
-    switchRoom(rooms[0].id);
-  } else {
-    saveRooms();
-    render();
+function loadImpostorConfig() {
+  try {
+    const raw = localStorage.getItem(KEY_IMPOSTOR_CFG);
+    if (raw) return JSON.parse(raw);
+  } catch { }
+  return { mode: "random", count: 1 };
+}
+
+function saveImpostorConfig() {
+  try {
+    localStorage.setItem(KEY_IMPOSTOR_CFG, JSON.stringify(impostorConfig));
+  } catch (err) {
+    console.error("Error guardando config de impostores:", err);
   }
 }
 
-function resetRoomScores(roomId) {
-  const room = rooms.find((r) => r.id === roomId);
-  if (!room) return;
-  room.players.forEach((p) => {
+function resetTournamentScores() {
+  players.forEach((p) => {
     p.score = 0;
     p.gamesPlayed = 0;
     p.wins = 0;
     p.impostorWins = 0;
     p.innocentWins = 0;
   });
-  room.gamesCount = 0;
-  room.lastGameResults = null;
-  room.lastAwardedMatchId = null;
-  saveRooms();
+  tournamentStats.gamesCount = 0;
+  tournamentStats.lastGameResults = null;
+  tournamentStats.lastAwardedMatchId = null;
+  savePlayers();
+  saveTournamentStats();
 
-  // Si es la sala activa, sincronizamos el estado actual
-  if (activeRoomId === roomId) {
-    state.players.forEach((sp) => {
-      sp.score = 0;
-      sp.gamesPlayed = 0;
-      sp.wins = 0;
-      sp.impostorWins = 0;
-      sp.innocentWins = 0;
-    });
-    save();
-  }
+  state.players.forEach((sp) => {
+    sp.score = 0;
+    sp.gamesPlayed = 0;
+    sp.wins = 0;
+    sp.impostorWins = 0;
+    sp.innocentWins = 0;
+  });
+  save();
+  showTournamentWinner = false;
+  showResetConfirm = false;
   render();
 }
 
-function switchRoom(roomId) {
-  const target = rooms.find((r) => r.id === roomId);
-  if (!target) return;
-  activeRoomId = target.id;
-  localStorage.setItem(KEY_ACTIVE_ROOM, activeRoomId);
+function loadGameState() {
+  try {
+    const raw = localStorage.getItem(KEY_LEGACY);
+    if (!raw) return buildStateFromPlayers();
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.players)) return buildStateFromPlayers();
+    let deckId = data.deckId || "standard";
+    if (deckId === "test") deckId = "custom";
+    if (!DECKS[deckId]) deckId = "standard";
 
-  // Cargamos los jugadores de esta sala al estado
-  state = {
+    const synchronizedPlayers = data.players.map((sp) => {
+      const p = players.find((x) => x.id === sp.id);
+      return {
+        ...sp,
+        score: p?.score ?? sp.score ?? 0,
+        gamesPlayed: p?.gamesPlayed ?? 0,
+        wins: p?.wins ?? 0,
+        impostorWins: p?.impostorWins ?? 0,
+        innocentWins: p?.innocentWins ?? 0,
+      };
+    });
+
+    return {
+      ...createInitial(),
+      ...data,
+      deckId,
+      players: synchronizedPlayers,
+      eliminated: data.eliminated || [],
+    };
+  } catch {
+    return buildStateFromPlayers();
+  }
+}
+
+function buildStateFromPlayers() {
+  return {
     ...createInitial(),
-    deckId: state.deckId || "standard",
-    players: (target.players || []).map((p) => ({
+    players: players.map((p) => ({
       id: p.id,
       name: p.name,
       score: p.score || 0,
@@ -216,71 +215,6 @@ function switchRoom(roomId) {
       role: null,
       alive: true,
     })),
-  };
-  showRoomsModal = false;
-  showLeaderboardModal = false;
-  error = "";
-  draft = "";
-  editId = null;
-  save();
-  render();
-}
-
-function loadGameState() {
-  const room = getActiveRoom();
-  try {
-    const raw = localStorage.getItem(KEY_LEGACY);
-    if (!raw) {
-      return buildStateFromRoom(room);
-    }
-    const data = JSON.parse(raw);
-    if (!data || !Array.isArray(data.players)) {
-      return buildStateFromRoom(room);
-    }
-    let deckId = data.deckId || "standard";
-    if (deckId === "test") deckId = "custom";
-    if (!DECKS[deckId]) deckId = "standard";
-
-    // Si la partida estaba en curso, preservamos roles y estado; si está en lobby, sincronizamos puntuaciones
-    const players = data.players.map((sp) => {
-      const rp = room?.players.find((p) => p.id === sp.id);
-      return {
-        ...sp,
-        score: rp?.score ?? sp.score ?? 0,
-        gamesPlayed: rp?.gamesPlayed ?? 0,
-        wins: rp?.wins ?? 0,
-        impostorWins: rp?.impostorWins ?? 0,
-        innocentWins: rp?.innocentWins ?? 0,
-      };
-    });
-
-    return {
-      ...createInitial(),
-      ...data,
-      deckId,
-      players,
-      eliminated: data.eliminated || [],
-    };
-  } catch {
-    return buildStateFromRoom(room);
-  }
-}
-
-function buildStateFromRoom(room) {
-  const players = (room?.players || []).map((p) => ({
-    id: p.id,
-    name: p.name,
-    score: p.score || 0,
-    gamesPlayed: p.gamesPlayed || 0,
-    wins: p.wins || 0,
-    impostorWins: p.impostorWins || 0,
-    innocentWins: p.innocentWins || 0,
-    role: null,
-    alive: true,
-  }));
-  return {
-    ...createInitial(),
-    players,
   };
 }
 
@@ -324,13 +258,12 @@ function dispatch(action) {
 
 function checkAndAwardMatchPoints() {
   if (!state.winner || !state.matchId) return;
-  const room = getActiveRoom();
-  if (!room || room.lastAwardedMatchId === state.matchId) return;
+  if (tournamentStats.lastAwardedMatchId === state.matchId) return;
 
   const deltas = calculateGameScores(state);
 
   // Capturamos el ranking ANTES de aplicar los puntos
-  const beforeStandings = (room.players || [])
+  const beforeStandings = players
     .map((p) => {
       const sp = state.players.find((s) => s.id === p.id);
       return {
@@ -343,7 +276,7 @@ function checkAndAwardMatchPoints() {
     .sort((a, b) => b.score - a.score);
 
   // Aplicamos los puntos y actualizamos estadísticas
-  (room.players || []).forEach((player) => {
+  players.forEach((player) => {
     const d = deltas[player.id];
     const pts = d ? d.total : 0;
     player.score = (player.score || 0) + pts;
@@ -362,7 +295,7 @@ function checkAndAwardMatchPoints() {
   });
 
   // Capturamos el ranking DESPUÉS de aplicar los puntos
-  const afterStandings = (room.players || [])
+  const afterStandings = players
     .map((p) => {
       const sp = state.players.find((s) => s.id === p.id);
       return {
@@ -374,9 +307,9 @@ function checkAndAwardMatchPoints() {
     })
     .sort((a, b) => b.score - a.score);
 
-  room.gamesCount = (room.gamesCount || 0) + 1;
-  room.lastAwardedMatchId = state.matchId;
-  room.lastGameResults = {
+  tournamentStats.gamesCount = (tournamentStats.gamesCount || 0) + 1;
+  tournamentStats.lastAwardedMatchId = state.matchId;
+  tournamentStats.lastGameResults = {
     matchId: state.matchId,
     winner: state.winner,
     word: state.word,
@@ -386,12 +319,13 @@ function checkAndAwardMatchPoints() {
     timestamp: Date.now(),
   };
 
-  saveRooms();
+  savePlayers();
+  saveTournamentStats();
 
   // Sincronizamos las puntuaciones en state.players
   state.players.forEach((sp) => {
-    const rp = room.players.find((p) => p.id === sp.id);
-    if (rp) sp.score = rp.score;
+    const p = players.find((x) => x.id === sp.id);
+    if (p) sp.score = p.score;
   });
   save();
 }
@@ -430,7 +364,15 @@ function deal() {
   if (!canStart(state)) return;
   const entry = pickWord();
   const maxImp = maxImpostors(state.players.length);
-  const impostorCount = 1 + Math.floor(Math.random() * maxImp);
+
+  // Cantidad de impostores: manual o al azar
+  let impostorCount;
+  if (impostorConfig.mode === "manual") {
+    impostorCount = Math.min(Math.max(1, impostorConfig.count || 1), maxImp);
+  } else {
+    impostorCount = 1 + Math.floor(Math.random() * maxImp);
+  }
+
   const impostorIds = shuffle(state.players.map((player) => player.id)).slice(0, impostorCount);
   const starter = state.players[Math.floor(Math.random() * state.players.length)];
   const matchId = "m_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
@@ -456,20 +398,16 @@ function addPlayer() {
   draft = "";
 
   const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "p_" + Date.now();
-  const room = getActiveRoom();
-  if (room) {
-    if (!room.players) room.players = [];
-    room.players.push({
-      id,
-      name,
-      score: 0,
-      gamesPlayed: 0,
-      wins: 0,
-      impostorWins: 0,
-      innocentWins: 0,
-    });
-    saveRooms();
-  }
+  players.push({
+    id,
+    name,
+    score: 0,
+    gamesPlayed: 0,
+    wins: 0,
+    impostorWins: 0,
+    innocentWins: 0,
+  });
+  savePlayers();
 
   dispatch({ type: "add", id, name });
   const input = root.querySelector("#name");
@@ -517,12 +455,11 @@ function render() {
     clock();
   }
 
-  // Si estamos en la pantalla de Leaderboard y venimos de una partida recién jugada, disparamos la animación solo una vez
+  // Animación del leaderboard si venimos de una partida recién concluida
   if (state.phase === "leaderboard") {
-    const room = getActiveRoom();
-    if (room?.lastGameResults && !leaderboardAnimPlayed) {
+    if (tournamentStats.lastGameResults && !leaderboardAnimPlayed) {
       leaderboardAnimPlayed = true;
-      triggerLeaderboardAnimation(room.lastGameResults);
+      triggerLeaderboardAnimation(tournamentStats.lastGameResults);
     }
   }
 }
@@ -542,8 +479,9 @@ function screen() {
 
   // Modales superpuestos
   let overlay = "";
-  if (showRoomsModal) overlay += roomsModal();
   if (showLeaderboardModal) overlay += standAloneLeaderboardModal();
+  if (showTournamentWinner) overlay += tournamentWinnerModal();
+  if (showResetConfirm) overlay += resetConfirmModal();
 
   return content + overlay;
 }
@@ -554,12 +492,10 @@ function screen() {
 
 function getFullscreenSvg(isFs) {
   if (isFs) {
-    // Minimizar: 4 esquinas/ángulos mirando hacia el centro (sin cuerpo de flecha)
     return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M4 9h3a2 2 0 0 0 2-2V4m6 0v3a2 2 0 0 0 2 2h3M4 15h3a2 2 0 0 1 2 2v3m6 0v-3a2 2 0 0 1 2-2h3"/>
     </svg>`;
   }
-  // Pantalla completa: 4 esquinas redondeadas apuntando hacia afuera idénticas a la imagen
   return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M4 8V6a2 2 0 0 1 2-2h2m8 0h2a2 2 0 0 1 2 2v2m0 8v2a2 2 0 0 1-2 2h-2m-8 0H6a2 2 0 0 1-2-2v-2"/>
   </svg>`;
@@ -567,12 +503,10 @@ function getFullscreenSvg(isFs) {
 
 function getThemeSvg(isDark) {
   if (isDark) {
-    // Sol con rayos puntiagudos dorados y borde negro EXACTO a la imagen
     return `<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
       <polygon points="12,2.5 13.37,5.14 15.64,3.24 16.27,6.46 18.72,5.28 18.47,8.41 20.78,8.36 19.46,10.63 21.5,12 19.46,13.37 20.78,15.64 18.47,15.59 18.72,18.72 16.27,17.54 15.64,20.76 13.37,18.86 12,21.5 10.63,18.86 8.36,20.76 7.73,17.54 5.28,18.72 5.53,15.59 3.22,15.64 4.54,13.37 2.5,12 4.54,10.63 3.22,8.36 5.53,8.41 5.28,5.28 7.73,6.46 8.36,3.24 10.63,5.14" fill="#ffd000" stroke="#000000" stroke-width="1.6" stroke-linejoin="round"/>
     </svg>`;
   }
-  // Luna estilizada para volver al modo oscuro
   return `<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="#ffd000" stroke="#000000" stroke-width="1.6" stroke-linejoin="round"/>
   </svg>`;
@@ -583,12 +517,11 @@ function lobby() {
   const activeDeck = DECKS[currentDeckId] || DECKS.standard;
   const maxImp = maxImpostors(state.players.length);
   const reason = startBlockReason(state);
-  const activeRoom = getActiveRoom();
 
-  const players = state.players.map((player, index) => {
+  const playersList = state.players.map((player, index) => {
     const editing = editId === player.id;
-    const roomPlayer = activeRoom?.players.find((p) => p.id === player.id);
-    const score = roomPlayer?.score ?? player.score ?? 0;
+    const pRecord = players.find((p) => p.id === player.id);
+    const score = pRecord?.score ?? player.score ?? 0;
 
     return `<li class="player" data-player-id="${player.id}" data-index="${index}">
       <button type="button" class="drag-handle" data-drag-handle aria-label="Arrastrar para mover">
@@ -602,11 +535,10 @@ function lobby() {
         </svg>
       </button>
       <span class="seat">${index + 1}</span>
-      ${
-        editing
-          ? `<input class="field" data-edit value="${esc(editDraft)}" maxlength="18" aria-label="Editar ${esc(player.name)}" />
+      ${editing
+        ? `<input class="field" data-edit value="${esc(editDraft)}" maxlength="18" aria-label="Editar ${esc(player.name)}" />
              <button class="icon" data-save="${player.id}" aria-label="Guardar">✓</button>`
-          : `<span class="name">${esc(player.name)}</span>
+        : `<span class="name">${esc(player.name)}</span>
              <span class="player-score-badge" title="Puntaje acumulado">⭐ ${score}</span>
              <button class="icon" data-rename="${player.id}" aria-label="Editar ${esc(player.name)}">✎</button>`
       }
@@ -632,37 +564,70 @@ function lobby() {
   const isDark = theme === "dark";
   const isFs = typeof document !== "undefined" && !!document.fullscreenElement;
 
+  // Ajustar count si excede maxImp
+  const activeCount = Math.min(Math.max(1, impostorConfig.count || 1), maxImp);
+
   return `<div class="top-actions">
+      <button type="button" class="leaderboard-toggle-btn" data-open-leaderboard aria-label="Ver Tabla de Posiciones" title="Tabla de Posiciones">
+        🏆 <span>Ranking</span>
+      </button>
       <button class="fullscreen-toggle" data-fullscreen aria-label="${isFs ? "Salir de pantalla completa" : "Pantalla completa"}" title="${isFs ? "Salir de pantalla completa" : "Pantalla completa"}">${getFullscreenSvg(isFs)}</button>
       <button class="theme-toggle" data-theme aria-label="Cambiar tema" title="Cambiar tema">${getThemeSvg(isDark)}</button>
     </div>
 
-    <!-- Barra de Sala Activa y Tabla -->
-    <div class="room-bar">
-      <button type="button" class="room-selector-btn" data-open-rooms>
-        <span class="room-icon">🏠</span>
-        <div class="room-info-wrap">
-          <span class="room-label">Sala</span>
-          <span class="room-name-text">${esc(activeRoom.name)}</span>
-        </div>
-        <span class="room-caret">▾</span>
-      </button>
-      <div class="room-bar-actions">
-        <button type="button" class="room-btn-icon" data-open-leaderboard aria-label="Ver Tabla de Posiciones" title="Tabla de Posiciones">
-          🏆
-        </button>
-      </div>
-    </div>
+    <header class="stack" style="margin-top:0.5rem">
+      <p class="eyebrow">Para la mesa</p>
+      <h1 style="font-size:3.2rem">El Impostor</h1>
+      <p class="lede">Una palabra. Una pantalla. Alguien miente. 🎭</p>
+    </header>
 
-    <header class="stack"><p class="eyebrow">Para la mesa</p><h1 style="font-size:3.2rem">El Impostor</h1><p class="lede">Una palabra. Una pantalla. Alguien miente. 🎭</p></header>
     <form class="stack" data-add>
       <label class="mute" for="name">Jugadores, en el orden de la mesa</label>
-      <div class="row"><input id="name" class="field" maxlength="18" placeholder="Nombre" value="${esc(draft)}" autocomplete="off" />
-      <button class="icon" type="submit" aria-label="Sumar jugador">+</button></div>
+      <div class="row">
+        <input id="name" class="field" maxlength="18" placeholder="Nombre" value="${esc(draft)}" autocomplete="off" />
+        <button class="icon" type="submit" aria-label="Sumar jugador">+</button>
+      </div>
       ${error ? `<p class="alert" role="alert">${esc(error)}</p>` : ""}
     </form>
-    ${players ? `<ul class="stack" style="list-style:none;padding:0;margin:0">${players}</ul>` : `<p class="panel mute">Sumá a quienes están sentados. Las puntuaciones se acumularán a lo largo de las partidas.</p>`}
+
+    ${playersList ? `<ul class="stack" style="list-style:none;padding:0;margin:0">${playersList}</ul>` : `<p class="panel mute">Sumá a quienes están sentados. Las puntuaciones se acumulan automáticamente a lo largo de las partidas.</p>`}
     
+    <!-- Configuración de Impostores (Aleatorio vs Manual) -->
+    <section class="panel stack">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="font-family:var(--display);font-size:1.4rem">Impostores</h2>
+        <span class="tiny" style="color:var(--accent);font-weight:700">Máximo: ${maxImp}</span>
+      </div>
+
+      <div class="impostor-mode-tabs">
+        <button type="button" class="mode-tab ${impostorConfig.mode === "random" ? "active" : ""}" data-impostor-mode="random">
+          🎲 Aleatorio (1 a ${maxImp})
+        </button>
+        <button type="button" class="mode-tab ${impostorConfig.mode === "manual" ? "active" : ""}" data-impostor-mode="manual">
+          🎯 Manual
+        </button>
+      </div>
+
+      ${impostorConfig.mode === "manual"
+      ? `<div class="impostor-count-selector">
+              <span class="eyebrow" style="margin-bottom:0.15rem">Cantidad fija de impostores:</span>
+              <div class="row" style="gap:0.5rem;flex-wrap:wrap">
+                ${Array.from({ length: maxImp }, (_, i) => i + 1).map((n) => `
+                  <button type="button" class="count-btn ${activeCount === n ? "active" : ""}" data-impostor-count="${n}">
+                    ${n} 🎭
+                  </button>
+                `).join("")}
+              </div>
+            </div>`
+      : `<p class="mute" style="font-size:0.95rem">
+              En cada partida saldrán al azar entre <strong>1 y ${maxImp}</strong> impostores. ¡Nadie sabrá cuántos hay!
+            </p>`
+    }
+
+      <p class="tiny" style="margin-top:0.25rem">⭐ <strong>Puntos:</strong> Victoria Inocente (+120 pts). Victoria Impostor (+260 pts). Infiltración perfecta (+120 pts solo si hay 2+ impostores).</p>
+    </section>
+
+    <!-- Mazo -->
     <section class="panel stack">
       <div class="row" style="justify-content:space-between;align-items:center">
         <h2 style="font-family:var(--display);font-size:1.4rem">Elegir mazo</h2>
@@ -671,12 +636,6 @@ function lobby() {
       <div class="deck-grid">
         ${deckCards}
       </div>
-    </section>
-    
-    <section class="panel stack">
-      <h2 style="font-family:var(--display);font-size:1.4rem">Impostores y Puntajes</h2>
-      <p class="mute">${state.players.length < 3 ? "Con 3 o más jugadores se puede empezar." : `Con ${state.players.length} jugadores salen entre 1 y ${maxImp} impostores (aleatorio).`}</p>
-      <p class="tiny">⭐ <strong>Puntos:</strong> Inocente victoria (+120 pts). Impostor victoria (+260 pts). Supervivencia impostor: 0 pts en 1ª ronda, +50 pts por ronda adicional, +120 pts infiltración perfecta.</p>
     </section>
     
     <div class="grow stack">
@@ -732,9 +691,22 @@ function card() {
 }
 
 function briefing() {
-  return `<header class="stack"><p class="eyebrow">Todos vieron su carta</p><h1 style="font-size:2.5rem">Empieza la ronda</h1><p class="lede">Van a decir palabras relacionadas. Dos minutos de referencia, sin apuro para votar.</p></header>
-    <section class="panel row" style="justify-content:space-between;align-items:center"><div><p class="eyebrow">Empieza</p><p class="word" style="font-size:2.4rem">${esc(starterName())}</p></div><button class="icon" data-reroll aria-label="Cambiar quién empieza">↻</button></section>
-    <div class="grow stack"><button class="btn" data-begin>Empezar la ronda</button>${cancel()}</div>`;
+  return `<header class="stack">
+      <p class="eyebrow">Todos vieron su carta</p>
+      <h1 style="font-size:2.5rem">Empieza la ronda</h1>
+      <p class="lede">Van a decir palabras relacionadas. Dos minutos de referencia, sin apuro para votar.</p>
+    </header>
+    <section class="panel row" style="justify-content:space-between;align-items:center">
+      <div>
+        <p class="eyebrow">Empieza</p>
+        <p class="word" style="font-size:2.4rem">${esc(starterName())}</p>
+      </div>
+      <button class="icon" data-reroll aria-label="Cambiar quién empieza">↻</button>
+    </section>
+    <div class="grow stack">
+      <button class="btn" data-begin>Empezar la ronda</button>
+      ${cancel()}
+    </div>`;
 }
 
 function countdown() {
@@ -754,33 +726,90 @@ function talk() {
   const started = state.talkStartedAt || Date.now();
   const remaining = Math.max(0, TALK_MS - (Date.now() - started));
   const timeUp = remaining === 0;
-  const order = speakingOrder(state.players, state.starterId).map((player) => player.name).join(" → ");
-  const gone = state.eliminated.map((player) => player.name).join(", ");
-  return `<header class="row" style="justify-content:space-between"><p class="eyebrow">Ronda ${state.round}</p><p class="mute">${state.players.filter((player) => player.alive).length} en juego</p></header>
-    <section class="center"><p class="eyebrow">Empieza</p><h1 style="font-size:3rem">${esc(starterName())}</h1></section>
-    <section class="stack"><p class="clock ${timeUp ? "blood" : ""}" data-clock>${formatTime(remaining)}</p><div class="bar"><span data-bar style="width:${(remaining / TALK_MS) * 100}%"></span></div>
-    ${timeUp ? `<p class="center blood" role="status">¡Se acabó el tiempo!</p>` : `<p class="tiny">Tiempo de referencia. Pueden votar cuando terminen de hablar.</p>`}</section>
-    <p class="tiny">Orden: ${esc(order)}</p>
-    ${gone ? `<p class="tiny">Afuera: ${esc(gone)}</p>` : ""}
-    <div class="grow stack"><button class="btn" data-vote>Pasar a votar</button>${cancel()}</div>`;
+  const alivePlayers = speakingOrder(state.players, state.starterId);
+  const gone = state.eliminated.map((player) => player.name);
+
+  return `<header class="row" style="justify-content:space-between;align-items:center">
+      <p class="eyebrow" style="font-size:0.85rem">Ronda ${state.round}</p>
+      <span class="active-badge" style="font-size:0.95rem;font-weight:700;color:var(--accent-2)">${alivePlayers.length} en juego</span>
+    </header>
+    
+    <section class="center" style="margin:0.2rem 0">
+      <p class="eyebrow" style="font-size:0.8rem">Empieza hablando</p>
+      <h1 style="font-size:3.2rem;line-height:1.1">${esc(starterName())}</h1>
+    </section>
+    
+    <section class="stack" style="gap:0.65rem">
+      <p class="clock ${timeUp ? "blood" : ""}" data-clock>${formatTime(remaining)}</p>
+      <div class="bar"><span data-bar style="width:${(remaining / TALK_MS) * 100}%"></span></div>
+      ${timeUp ? `<p class="center blood" role="status" style="font-size:1.15rem;font-weight:700">¡Se acabó el tiempo!</p>` : `<p class="talk-instruction">Tiempo de referencia. Pueden votar cuando todos hayan hablado.</p>`}
+    </section>
+    
+    <!-- Orden para hablar destacado y legible -->
+    <section class="speaking-order-card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <span class="eyebrow" style="font-size:0.8rem">🗣️ Orden para hablar</span>
+        <span style="font-size:0.85rem;color:var(--text-mute);font-weight:600">Sentido de la mesa</span>
+      </div>
+      <div class="speaking-order-chips">
+        ${alivePlayers.map((player, i) => `
+          <span class="speaking-chip ${player.id === state.starterId ? "starter" : ""}">
+            <strong class="chip-num">${i + 1}</strong>
+            <span class="chip-name">${esc(player.name)}</span>
+          </span>
+        `).join('<span class="chip-arrow">→</span>')}
+      </div>
+    </section>
+
+    ${gone.length ? `
+      <div class="eliminated-summary-panel">
+        <span class="eyebrow" style="color:var(--blood)">❌ Eliminados:</span>
+        <span style="font-size:0.95rem">${esc(gone.join(", "))}</span>
+      </div>
+    ` : ""}
+
+    <div class="grow stack" style="margin-top:1rem">
+      <button class="btn" data-vote>Pasar a votar</button>
+      ${cancel()}
+    </div>`;
 }
 
 function vote() {
   const alive = state.players.filter((player) => player.alive);
   const selected = alive.find((player) => player.id === state.voteId);
-  const choices = alive.map((player) => `<button class="choice ${player.id === state.voteId ? "on" : ""}" data-pick="${player.id}" aria-pressed="${player.id === state.voteId}">${esc(player.name)}</button>`).join("");
+  const choices = alive.map((player) => `
+    <button type="button" class="choice ${player.id === state.voteId ? "on" : ""}" data-pick="${player.id}" aria-pressed="${player.id === state.voteId}">
+      <span>${esc(player.name)}</span>
+      ${player.id === state.voteId ? "<span>✓</span>" : ""}
+    </button>
+  `).join("");
+
   const confirm = state.confirming && selected
-    ? `<div class="panel stack"><p class="center">¿Sacan a ${esc(selected.name)} de la partida?</p><div class="row"><button class="btn ghost" data-backconfirm>No, volver</button><button class="btn blood" data-eliminate>Sí, sacarlo</button></div></div>`
+    ? `<div class="panel stack">
+        <p class="center" style="font-size:1.15rem;font-weight:700">¿Sacan a ${esc(selected.name)} de la partida?</p>
+        <div class="row">
+          <button class="btn ghost" data-backconfirm>No, volver</button>
+          <button class="btn blood" data-eliminate>Sí, sacarlo</button>
+        </div>
+      </div>`
     : `<button class="btn" data-ask ${selected ? "" : "disabled"}>${selected ? `Eliminar a ${esc(selected.name)}` : "Elegí a alguien"}</button>`;
-  return `<header class="stack"><p class="eyebrow">Votación · ronda ${state.round}</p><h1 style="font-size:2.4rem">¿Quién tuvo más votos?</h1><p class="lede">Voten entre ustedes. Después toquen al que quedó elegido.</p></header>
-    <div class="stack">${choices}</div><div class="grow stack">${confirm}<button class="btn ghost" data-backtalk>Volver a la ronda</button></div>`;
+
+  return `<header class="stack">
+      <p class="eyebrow">Votación · ronda ${state.round}</p>
+      <h1 style="font-size:2.4rem">¿Quién tuvo más votos?</h1>
+      <p class="lede">Voten entre ustedes. Después toquen al que quedó elegido.</p>
+    </header>
+    <div class="stack">${choices}</div>
+    <div class="grow stack">
+      ${confirm}
+      <button class="btn ghost" data-backtalk>Volver a la ronda</button>
+    </div>`;
 }
 
 function suspense() {
   const started = state.suspenseStartedAt || Date.now();
   const elapsed = Date.now() - started;
   if (elapsed >= 3000) {
-    // Espacio con pantalla vacía tras el 3 2 1 para máximo suspenso
     return `<div class="countdown-overlay"></div>`;
   }
   const target = state.players.find((player) => player.id === state.voteId);
@@ -797,7 +826,6 @@ function suspense() {
 }
 
 function reveal() {
-  // Al entrar a reveal con ganador, nos aseguramos de adjudicar puntos
   if (state.winner) {
     checkAndAwardMatchPoints();
   }
@@ -816,7 +844,7 @@ function reveal() {
   if (state.winner === "innocents") {
     outcomeHtml = `<div class="reveal-banner gold-banner">
       <p class="reveal-result-title gold">🏆 ¡Los inocentes ganan!</p>
-      <p class="mute">Descubrieron a todos los impostores de la sala.</p>
+      <p class="mute">Descubrieron a todos los impostores.</p>
     </div>`;
   } else if (state.winner === "impostors") {
     outcomeHtml = `<div class="reveal-banner blood-banner">
@@ -846,7 +874,7 @@ function reveal() {
 
   let actionBtn = "";
   if (state.winner) {
-    actionBtn = `<button class="btn" data-to-leaderboard>Otra partida 🎲</button>`;
+    actionBtn = `<button class="btn" data-to-leaderboard>Ver Tabla de Posiciones 🏆</button>`;
   } else {
     actionBtn = `<button class="btn paper" data-next>Siguiente ronda ➔</button>
       <button class="btn ghost" data-revote style="font-weight:700">Hacer otra votación 🗳️</button>`;
@@ -869,20 +897,17 @@ function reveal() {
 }
 
 // ==========================================================================
-// PANTALLA DE LEADERBOARD POST-PARTIDA (CON ANIMACIÓN DE PUNTOS Y REORDENAMIENTO)
+// PANTALLA DE LEADERBOARD POST-PARTIDA (CON ANIMACIÓN DE PUNTOS)
 // ==========================================================================
 
 function leaderboardScreen() {
-  const room = getActiveRoom();
-  const results = room?.lastGameResults;
+  const results = tournamentStats.lastGameResults;
 
   if (!results) {
-    // Si no hay resultados de partida reciente, mostramos la tabla normal
     return standAloneLeaderboardView();
   }
 
   const { winner, word, deltas, beforeStandings, afterStandings } = results;
-
   const sourceStandings = leaderboardAnimPlayed ? afterStandings : beforeStandings;
 
   const rowsHtml = sourceStandings.map((player, index) => {
@@ -972,7 +997,7 @@ function leaderboardScreen() {
 
   return `<div class="leaderboard-stage">
     <div class="lb-header-box">
-      <span class="eyebrow">Partida finalizada · ${esc(room.name)}</span>
+      <span class="eyebrow">Partida finalizada</span>
       <h1 style="font-size:2.2rem">Tabla de Posiciones 🏆</h1>
       <div class="lb-match-badge ${winner}">
         ${winner === "innocents" ? "🛡️ Ganaron los Inocentes" : "🎭 Ganaron los Impostores"}
@@ -980,6 +1005,7 @@ function leaderboardScreen() {
       ${word ? `<p class="tiny" style="margin-top:0.25rem">Palabra secreta: <strong style="color:var(--gold)">${esc(word)}</strong></p>` : ""}
     </div>
 
+    <!-- Lista de Posiciones -->
     <div class="lb-list" id="lb-list">
       ${rowsHtml}
     </div>
@@ -993,9 +1019,16 @@ function leaderboardScreen() {
       </div>
     </div>
 
+    <!-- Opciones de Torneo -->
+    <div class="row" style="gap:0.5rem;margin-top:0.5rem">
+      <button type="button" class="btn tournament-btn" data-finish-tournament>🏆 Terminar Torneo</button>
+      <button type="button" class="btn ghost danger-text" data-ask-reset-scores>↺ Reiniciar Puntos</button>
+    </div>
+
     <div class="grow stack" style="margin-top:0.75rem">
-      <button class="btn" data-lobby>Otra partida 🎲</button>
+      <button class="btn" data-deal-next>Otra partida 🎲</button>
       <button class="link" data-replay-anim style="margin-top:-0.25rem">↺ Repetir animación de puntos</button>
+      <button class="btn ghost" data-lobby style="margin-top:0.25rem">Volver a la mesa 🏠</button>
     </div>
   </div>`;
 }
@@ -1139,8 +1172,7 @@ function triggerLeaderboardAnimation(results) {
 }
 
 function standAloneLeaderboardView() {
-  const room = getActiveRoom();
-  const sorted = [...(room?.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
+  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
 
   const rows = sorted.map((player, index) => {
     let rankBadge = `${index + 1}°`;
@@ -1172,86 +1204,31 @@ function standAloneLeaderboardView() {
   return `<div class="leaderboard-stage">
     <div class="lb-header-box">
       <span class="eyebrow">Tabla general acumulada</span>
-      <h1 style="font-size:2.2rem">${esc(room.name)} 🏆</h1>
-      <p class="mute">${room.gamesCount || 0} partidas registradas en esta sala</p>
+      <h1 style="font-size:2.2rem">Ranking del Torneo 🏆</h1>
+      <p class="mute">${tournamentStats.gamesCount || 0} partidas jugadas en este torneo</p>
     </div>
     <div class="lb-list">
-      ${rows || `<p class="mute center" style="padding:1.5rem">Aún no hay jugadores registrados en esta sala.</p>`}
+      ${rows || `<p class="mute center" style="padding:1.5rem">Aún no hay jugadores registrados.</p>`}
     </div>
-    <div class="grow stack" style="margin-top:1rem">
-      <button class="btn" data-lobby>Volver a la sala 🏠</button>
+
+    <!-- Opciones de Torneo -->
+    <div class="row" style="gap:0.5rem;margin-top:0.75rem">
+      <button type="button" class="btn tournament-btn" data-finish-tournament>🏆 Terminar Torneo</button>
+      <button type="button" class="btn ghost danger-text" data-ask-reset-scores>↺ Reiniciar Puntos</button>
+    </div>
+
+    <div class="grow stack" style="margin-top:0.75rem">
+      <button class="btn" data-lobby>Volver a la mesa 🏠</button>
     </div>
   </div>`;
 }
 
 // ==========================================================================
-// MODALES (GESTIÓN DE SALAS Y TABLA GENERAL)
+// MODALES (LEADERBOARD, GANADOR DEL TORNEO, REINICIAR PUNTOS)
 // ==========================================================================
-
-function roomsModal() {
-  const active = getActiveRoom();
-
-  const roomsHtml = rooms.map((r) => {
-    const isActive = r.id === active.id;
-    const isEditing = editingRoomId === r.id;
-
-    return `<div class="room-item ${isActive ? "active" : ""}">
-      <div class="room-item-info" data-switch-room="${r.id}">
-        ${
-          isEditing
-            ? `<div class="row" style="gap:0.3rem" onclick="event.stopPropagation()">
-                 <input class="field" style="min-height:2.2rem;padding:0 0.6rem;font-size:0.95rem" data-edit-room-input value="${esc(editingRoomDraft)}" />
-                 <button class="room-action-icon" data-save-room-name="${r.id}">✓</button>
-               </div>`
-            : `<div class="row" style="gap:0.4rem;align-items:center">
-                 <span class="room-item-title">${esc(r.name)}</span>
-                 ${isActive ? `<span class="deck-badge active" style="font-size:0.68rem">Activa</span>` : ""}
-               </div>`
-        }
-        <span class="room-item-meta">${r.players?.length || 0} jugadores · ${r.gamesCount || 0} partidas</span>
-      </div>
-      <div class="room-item-actions">
-        ${
-          !isEditing
-            ? `<button type="button" class="room-action-icon" data-rename-room="${r.id}" title="Renombrar sala">✎</button>`
-            : ""
-        }
-        <button type="button" class="room-action-icon" data-reset-room="${r.id}" title="Reiniciar puntuaciones a 0">↺</button>
-        ${
-          rooms.length > 1
-            ? `<button type="button" class="room-action-icon danger" data-delete-room="${r.id}" title="Eliminar sala">✕</button>`
-            : ""
-        }
-      </div>
-    </div>`;
-  }).join("");
-
-  return `<div class="modal-overlay" data-close-modal>
-    <div class="modal-card" onclick="event.stopPropagation()">
-      <div class="modal-header">
-        <h2 class="modal-title">Salas de Juego 🏠</h2>
-        <button type="button" class="modal-close" data-close-modal aria-label="Cerrar">✕</button>
-      </div>
-      <p class="mute" style="font-size:0.9rem">Cada sala guarda sus propios jugadores y puntuaciones acumuladas.</p>
-      
-      <div class="rooms-list">
-        ${roomsHtml}
-      </div>
-
-      <div class="panel stack" style="margin-top:0.5rem;padding:0.9rem">
-        <p class="eyebrow">Crear nueva sala</p>
-        <div class="row">
-          <input id="new-room-input" class="field" style="min-height:2.6rem" placeholder="Ej: Los Pibes, Familia..." value="${esc(newRoomDraft)}" maxlength="20" />
-          <button type="button" class="btn" style="min-height:2.6rem;width:auto;flex:none;padding:0 1rem" data-create-room-btn>+ Crear</button>
-        </div>
-      </div>
-    </div>
-  </div>`;
-}
 
 function standAloneLeaderboardModal() {
-  const room = getActiveRoom();
-  const sorted = [...(room?.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
+  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
 
   const rows = sorted.map((player, index) => {
     let rankBadge = `${index + 1}°`;
@@ -1280,29 +1257,140 @@ function standAloneLeaderboardModal() {
     </div>`;
   }).join("");
 
-  return `<div class="modal-overlay" data-close-modal>
-    <div class="modal-card" onclick="event.stopPropagation()">
+  return `<div class="modal-overlay">
+    <div class="modal-card">
       <div class="modal-header">
         <div>
           <span class="eyebrow">Tabla de Posiciones</span>
-          <h2 class="modal-title">${esc(room.name)} 🏆</h2>
+          <h2 class="modal-title">Ranking del Torneo 🏆</h2>
         </div>
         <button type="button" class="modal-close" data-close-modal aria-label="Cerrar">✕</button>
       </div>
-      <p class="tiny" style="text-align:left">${room.gamesCount || 0} partidas jugadas en total</p>
+      <p class="tiny" style="text-align:left">${tournamentStats.gamesCount || 0} partidas jugadas en este torneo</p>
       
       <div class="lb-list">
         ${rows || `<p class="mute center" style="padding:1.5rem">Aún no hay jugadores registrados.</p>`}
       </div>
 
-      <button type="button" class="btn ghost" data-close-modal style="margin-top:0.5rem">Cerrar</button>
+      <div class="row" style="gap:0.5rem;margin-top:0.75rem">
+        <button type="button" class="btn tournament-btn" data-finish-tournament>🏆 Terminar Torneo</button>
+        <button type="button" class="btn ghost danger-text" data-ask-reset-scores>↺ Reiniciar Puntos</button>
+      </div>
+
+      <button type="button" class="btn ghost" data-close-modal style="margin-top:0.25rem">Cerrar</button>
+    </div>
+  </div>`;
+}
+
+function tournamentWinnerModal() {
+  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
+  const champion = sorted[0];
+  const p2 = sorted[1];
+  const p3 = sorted[2];
+
+  if (!champion || champion.score === 0) {
+    return `<div class="modal-overlay">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 class="modal-title">Torneo</h2>
+          <button type="button" class="modal-close" data-close-modal>✕</button>
+        </div>
+        <p class="mute center" style="padding:1.5rem">Aún no hay puntuaciones acumuladas para definir un ganador.</p>
+        <button type="button" class="btn ghost" data-close-modal>Cerrar</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="modal-overlay">
+    <div class="modal-card">
+      <div class="winner-card-inner">
+        <span class="winner-crown">👑</span>
+        <div class="winner-avatar-lg">${esc(champion.name.slice(0, 1).toUpperCase())}</div>
+        <span class="eyebrow" style="font-size:0.85rem;letter-spacing:0.18em">¡CAMPEÓN DEL TORNEO!</span>
+        <h2 class="winner-champion-title">${esc(champion.name)}</h2>
+        
+        <div class="winner-score-highlight">
+          ⭐ ${champion.score || 0} pts
+        </div>
+        <p class="mute" style="font-size:0.95rem">
+          ${champion.wins || 0} victorias · ${champion.gamesPlayed || 0} partidas jugadas
+        </p>
+
+        <!-- Podio Top 3 -->
+        <div class="winner-podium">
+          ${p2 ? `
+            <div class="podium-col rank-2">
+              <div class="podium-avatar">${esc(p2.name.slice(0, 1).toUpperCase())}</div>
+              <span class="podium-name">${esc(p2.name)}</span>
+              <div class="podium-step">
+                <span>🥈 2°</span>
+                <span style="font-size:0.8rem">${p2.score || 0} pts</span>
+              </div>
+            </div>
+          ` : ""}
+          <div class="podium-col rank-1">
+            <div class="podium-avatar">👑</div>
+            <span class="podium-name">${esc(champion.name)}</span>
+            <div class="podium-step">
+              <span>🥇 1°</span>
+              <span style="font-size:0.85rem">${champion.score || 0} pts</span>
+            </div>
+          </div>
+          ${p3 ? `
+            <div class="podium-col rank-3">
+              <div class="podium-avatar">${esc(p3.name.slice(0, 1).toUpperCase())}</div>
+              <span class="podium-name">${esc(p3.name)}</span>
+              <div class="podium-step">
+                <span>🥉 3°</span>
+                <span style="font-size:0.8rem">${p3.score || 0} pts</span>
+              </div>
+            </div>
+          ` : ""}
+        </div>
+
+        <p class="tiny" style="color:var(--text-mute)">Al empezar un nuevo torneo, todos los puntos volverán a 0.</p>
+        
+        <div class="stack" style="width:100%;gap:0.5rem;margin-top:0.5rem">
+          <button type="button" class="btn tournament-btn" data-confirm-new-tournament>
+            🔄 Empezar Nuevo Torneo (Reiniciar a 0)
+          </button>
+          <button type="button" class="btn ghost" data-close-modal>
+            Cerrar y seguir viendo
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function resetConfirmModal() {
+  return `<div class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">Reiniciar Puntuaciones ↺</h2>
+        <button type="button" class="modal-close" data-close-modal>✕</button>
+      </div>
+      <p style="font-size:1.05rem;line-height:1.4">
+        ¿Estás seguro de que querés reiniciar a <strong>0 puntos</strong> a todos los jugadores sin terminar el torneo?
+      </p>
+      <p class="mute" style="font-size:0.9rem">Esta acción borrará los puntos acumulados de todos.</p>
+      <div class="row" style="margin-top:0.75rem">
+        <button type="button" class="btn ghost" data-close-modal>Cancelar</button>
+        <button type="button" class="btn blood" data-confirm-reset-scores>Sí, reiniciar a 0</button>
+      </div>
     </div>
   </div>`;
 }
 
 function cancel() {
   if (!cancelAsk) return `<button class="link" data-cancel>Cancelar partida</button>`;
-  return `<div class="panel stack"><p class="mute">¿Volver a la mesa? Se borran los roles de esta partida.</p><div class="row"><button class="btn ghost" data-keep>Seguir</button><button class="btn blood" data-lobby>Sí, cancelar</button></div></div>`;
+  return `<div class="panel stack">
+    <p class="mute">¿Volver a la mesa? Se borran los roles de esta partida.</p>
+    <div class="row">
+      <button class="btn ghost" data-keep>Seguir</button>
+      <button class="btn blood" data-lobby>Sí, cancelar</button>
+    </div>
+  </div>`;
 }
 
 // ==========================================================================
@@ -1310,62 +1398,75 @@ function cancel() {
 // ==========================================================================
 
 function initEvents() {
+  // Manejo de clics
   root.addEventListener("click", (event) => {
-    const target = event.target.closest("button") || event.target.closest("[data-switch-room]") || event.target.closest("[data-close-modal]");
-    if (!target) return;
-
-    // Modales de salas y leaderboard
-    if (target.dataset.openRooms != null) {
-      showRoomsModal = true;
-      editingRoomId = null;
+    // Si el clic fue directamente en el fondo oscuro del modal, lo cerramos
+    if (event.target.classList.contains("modal-overlay")) {
+      showLeaderboardModal = false;
+      showTournamentWinner = false;
+      showResetConfirm = false;
       render();
       return;
     }
+
+    const target = event.target.closest("button") || event.target.closest("[data-close-modal]");
+    if (!target) return;
+
+    // Abrir tabla de posiciones
     if (target.dataset.openLeaderboard != null) {
       showLeaderboardModal = true;
       render();
       return;
     }
+
+    // Cerrar cualquier modal
     if (target.dataset.closeModal != null) {
-      showRoomsModal = false;
       showLeaderboardModal = false;
-      editingRoomId = null;
+      showTournamentWinner = false;
+      showResetConfirm = false;
       render();
       return;
     }
-    if (target.dataset.switchRoom) {
-      switchRoom(target.dataset.switchRoom);
-      return;
-    }
-    if (target.dataset.createRoomBtn != null) {
-      const input = root.querySelector("#new-room-input");
-      const name = input?.value || newRoomDraft;
-      createRoom(name);
-      newRoomDraft = "";
-      return;
-    }
-    if (target.dataset.renameRoom) {
-      editingRoomId = target.dataset.renameRoom;
-      const r = rooms.find((x) => x.id === editingRoomId);
-      editingRoomDraft = r ? r.name : "";
+
+    // Configuración de modo de impostores (aleatorio vs manual)
+    if (target.dataset.impostorMode != null) {
+      impostorConfig.mode = target.dataset.impostorMode;
+      saveImpostorConfig();
       render();
       return;
     }
-    if (target.dataset.saveRoomName) {
-      renameRoom(target.dataset.saveRoomName, editingRoomDraft);
-      editingRoomId = null;
+    if (target.dataset.impostorCount != null) {
+      impostorConfig.count = parseInt(target.dataset.impostorCount, 10);
+      saveImpostorConfig();
+      render();
       return;
     }
-    if (target.dataset.resetRoom) {
-      if (confirm("¿Estás seguro de reiniciar a 0 todas las puntuaciones acumuladas en esta sala?")) {
-        resetRoomScores(target.dataset.resetRoom);
-      }
+
+    // Terminar torneo (mostrar ganador)
+    if (target.dataset.finishTournament != null) {
+      showLeaderboardModal = false;
+      showTournamentWinner = true;
+      render();
+      burst(); // Confeti para celebrar al ganador
       return;
     }
-    if (target.dataset.deleteRoom) {
-      if (confirm("¿Estás seguro de eliminar esta sala? Se perderán sus jugadores y puntuaciones.")) {
-        deleteRoom(target.dataset.deleteRoom);
-      }
+
+    // Confirmar nuevo torneo desde el modal del ganador
+    if (target.dataset.confirmNewTournament != null) {
+      resetTournamentScores();
+      return;
+    }
+
+    // Pedir confirmación para reiniciar puntos a 0
+    if (target.dataset.askResetScores != null) {
+      showResetConfirm = true;
+      render();
+      return;
+    }
+
+    // Confirmar reinicio directo de puntos
+    if (target.dataset.confirmResetScores != null) {
+      resetTournamentScores();
       return;
     }
 
@@ -1384,11 +1485,6 @@ function initEvents() {
       }
       return;
     }
-    if (target.dataset.replayAnim != null) {
-      leaderboardAnimPlayed = false;
-      render();
-      return;
-    }
     if (target.dataset.dealNext != null) {
       dispatch({ type: "toLobby" });
       deal();
@@ -1399,9 +1495,9 @@ function initEvents() {
     if (target.dataset.deal != null) deal();
     if (target.dataset.fullscreen != null) {
       if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen?.().catch(() => {});
+        document.documentElement.requestFullscreen?.().catch(() => { });
       } else {
-        document.exitFullscreen?.().catch(() => {});
+        document.exitFullscreen?.().catch(() => { });
       }
       return;
     }
@@ -1410,36 +1506,34 @@ function initEvents() {
       localStorage.setItem("el-impostor-theme", theme);
       document.documentElement.setAttribute("data-theme", theme);
       render();
+      return;
     }
     if (target.dataset.remove) {
       const idToRemove = target.dataset.remove;
-      const room = getActiveRoom();
-      if (room && room.players) {
-        room.players = room.players.filter((p) => p.id !== idToRemove);
-        saveRooms();
-      }
+      players = players.filter((p) => p.id !== idToRemove);
+      savePlayers();
       dispatch({ type: "remove", id: idToRemove });
+      return;
     }
     if (target.dataset.rename) {
       editId = target.dataset.rename;
       editDraft = state.players.find((player) => player.id === editId)?.name || "";
       render();
+      return;
     }
     if (target.dataset.save) {
       if (editDraft.trim()) {
         const cleanName = normalizeName(editDraft);
         dispatch({ type: "rename", id: target.dataset.save, name: cleanName });
-        const room = getActiveRoom();
-        if (room && room.players) {
-          const p = room.players.find((player) => player.id === target.dataset.save);
-          if (p) {
-            p.name = cleanName;
-            saveRooms();
-          }
+        const p = players.find((player) => player.id === target.dataset.save);
+        if (p) {
+          p.name = cleanName;
+          savePlayers();
         }
       }
       editId = null;
       render();
+      return;
     }
     if (target.dataset.hide != null) {
       const wrap = root.querySelector(".card-wrap");
@@ -1451,37 +1545,42 @@ function initEvents() {
       } else {
         dispatch({ type: "hideCard", now: Date.now() });
       }
+      return;
     }
     if (target.dataset.arm != null) dispatch({ type: "armNext" });
     if (target.dataset.reroll != null) {
       const pool = state.players.filter((player) => player.id !== state.starterId);
       const source = pool.length ? pool : state.players;
       dispatch({ type: "rerollStarter", starterId: source[Math.floor(Math.random() * source.length)].id });
+      return;
     }
     if (target.dataset.begin != null) dispatch({ type: "beginCountdown", now: Date.now() });
     if (target.dataset.vote != null) dispatch({ type: "toVote" });
-    if (target.dataset.pick) dispatch({ type: "selectVote", id: target.dataset.pick });
+    if (target.dataset.backtalk != null) dispatch({ type: "backToTalk" });
+    if (target.dataset.pick != null) dispatch({ type: "selectVote", id: target.dataset.pick });
     if (target.dataset.ask != null) dispatch({ type: "askConfirm" });
     if (target.dataset.backconfirm != null) dispatch({ type: "cancelConfirm" });
     if (target.dataset.eliminate != null) dispatch({ type: "beginSuspense", now: Date.now() });
-    if (target.dataset.backtalk != null) dispatch({ type: "backToTalk" });
     if (target.dataset.next != null) dispatch({ type: "nextRound", now: Date.now() });
     if (target.dataset.revote != null) dispatch({ type: "voteAgain" });
-    if (target.dataset.setDeck) dispatch({ type: "setDeck", deckId: target.dataset.setDeck });
-    if (target.dataset.lobby != null) {
-      editId = null;
-      dispatch({ type: "toLobby" });
-    }
+    if (target.dataset.lobby != null) dispatch({ type: "toLobby" });
     if (target.dataset.cancel != null) {
       cancelAsk = true;
       render();
+      return;
     }
     if (target.dataset.keep != null) {
       cancelAsk = false;
       render();
+      return;
+    }
+    if (target.dataset.setDeck != null) {
+      dispatch({ type: "setDeck", deckId: target.dataset.setDeck });
+      return;
     }
   });
 
+  // Envío de formulario para añadir jugador
   root.addEventListener("submit", (event) => {
     if (event.target.matches("[data-add]")) {
       event.preventDefault();
@@ -1489,69 +1588,33 @@ function initEvents() {
     }
   });
 
+  // Inputs de nombre
   root.addEventListener("input", (event) => {
     if (event.target.id === "name") {
       draft = event.target.value;
-    } else if (event.target.matches("[data-edit]")) {
-      editDraft = event.target.value;
-    } else if (event.target.id === "new-room-input") {
-      newRoomDraft = event.target.value;
-    } else if (event.target.matches("[data-edit-room-input]")) {
-      editingRoomDraft = event.target.value;
+      if (error) {
+        error = "";
+        const alertNode = root.querySelector(".alert");
+        if (alertNode) alertNode.remove();
+      }
     }
-  });
-
-  root.addEventListener("keydown", (event) => {
     if (event.target.matches("[data-edit]")) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        if (editId && editDraft.trim()) {
-          const cleanName = normalizeName(editDraft);
-          dispatch({ type: "rename", id: editId, name: cleanName });
-          const room = getActiveRoom();
-          if (room && room.players) {
-            const p = room.players.find((player) => player.id === editId);
-            if (p) {
-              p.name = cleanName;
-              saveRooms();
-            }
-          }
-        }
-        editId = null;
-        render();
-      } else if (event.key === "Escape") {
-        editId = null;
-        render();
-      }
-    } else if (event.target.matches("[data-edit-room-input]")) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        if (editingRoomId && editingRoomDraft.trim()) {
-          renameRoom(editingRoomId, editingRoomDraft);
-        }
-        editingRoomId = null;
-      } else if (event.key === "Escape") {
-        editingRoomId = null;
-        render();
-      }
-    } else if (event.target.id === "new-room-input" && event.key === "Enter") {
-      event.preventDefault();
-      createRoom(newRoomDraft);
-      newRoomDraft = "";
+      editDraft = event.target.value;
     }
   });
 
-  setupDragEvents();
-
+  // Escuchar salida de pantalla completa
   document.addEventListener("fullscreenchange", () => {
     const fsBtn = root.querySelector("[data-fullscreen]");
     if (fsBtn) {
-      const isFs = typeof document !== "undefined" && !!document.fullscreenElement;
+      const isFs = !!document.fullscreenElement;
       fsBtn.innerHTML = getFullscreenSvg(isFs);
       fsBtn.setAttribute("aria-label", isFs ? "Salir de pantalla completa" : "Pantalla completa");
       fsBtn.setAttribute("title", isFs ? "Salir de pantalla completa" : "Pantalla completa");
     }
   });
+
+  setupDragEvents();
 }
 
 // ==========================================================================
@@ -1574,9 +1637,7 @@ function setupDragEvents() {
     event.preventDefault();
     try {
       handle.setPointerCapture?.(event.pointerId);
-    } catch {
-      /* ignore */
-    }
+    } catch { }
 
     draggingPlayerId = item.dataset.playerId;
     const fromIndex = allItems.indexOf(item);
@@ -1658,12 +1719,9 @@ function setupDragEvents() {
         draggingPlayerId = null;
 
         if (movedFrom !== movedTo) {
-          const room = getActiveRoom();
-          if (room && room.players) {
-            const [moved] = room.players.splice(movedFrom, 1);
-            room.players.splice(movedTo, 0, moved);
-            saveRooms();
-          }
+          const [moved] = players.splice(movedFrom, 1);
+          players.splice(movedTo, 0, moved);
+          savePlayers();
           dispatch({ type: "reorder", from: movedFrom, to: movedTo });
         }
       }, 180);
@@ -1690,9 +1748,7 @@ function onSwipeStart(event) {
   currentCardNode.style.transition = "none";
   try {
     currentCardNode.setPointerCapture?.(event.pointerId);
-  } catch {
-    /* ignore */
-  }
+  } catch { }
   currentCardNode.addEventListener("pointermove", onSwipeMove);
   currentCardNode.addEventListener("pointerup", onSwipeEnd, { once: true });
   currentCardNode.addEventListener("pointercancel", onSwipeCancel, { once: true });

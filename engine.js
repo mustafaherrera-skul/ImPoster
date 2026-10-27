@@ -296,10 +296,13 @@ export function calculateGameScores(state) {
         }
       }
     } else if (state.winner === "impostors") {
+      const totalImpostors = state.players.filter((p) => p.role === "impostor").length;
       if (isImpostor) {
         breakdown.push({ label: "Victoria Impostor 🎭", pts: 260 });
         if (!wasEliminated) {
-          breakdown.push({ label: "Infiltración perfecta (no detectado)", pts: 120 });
+          if (totalImpostors > 1) {
+            breakdown.push({ label: "Infiltración perfecta (no detectado)", pts: 120 });
+          }
         } else {
           if (elimRound <= 1) {
             breakdown.push({ label: "Eliminado en 1ª ronda", pts: 0 });
