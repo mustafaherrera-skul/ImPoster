@@ -1749,8 +1749,36 @@ body.fullscreen-active {
 /* Footer & links */
 .app-footer {
   text-align: center;
-  margin-top: 1.25rem;
-  padding-bottom: 0.5rem;
+  margin-top: 2rem;
+  padding-bottom: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.footer-credits {
+  font-size: 0.8rem;
+  color: var(--text-mute);
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+.footer-credits strong {
+  color: var(--text);
+}
+
+.footer-credits em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.footer-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
 }
 
 .link-btn {
@@ -1762,6 +1790,11 @@ body.fullscreen-active {
   font-weight: 700;
   padding: 0.2rem;
   font-size: inherit;
+  transition: opacity 0.15s;
+}
+
+.link-btn:hover {
+  opacity: 0.85;
 }
 
 .backup-section {
