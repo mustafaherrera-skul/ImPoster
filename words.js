@@ -9,8 +9,8 @@
 // ============================================================================
 export const CUSTOM_WORDS = [
   // --- TUS PALABRAS PERSONALIZADAS EMPIEZAN ACÁ ---
-  { word: "PlayStation", hints: ["Consola", "Videojuegos", "Pantalla"] },
-  { word: "Netflix", hints: ["Series", "Pantalla", "Sillón"] },
+  { word: "Maria Fava", hints: ["Redondo", "Sitio", "Aburrido"] },
+  { word: "Alan", hints: ["Red", "Pantalla", "Sillón"] },
   { word: "Asado de tira", hints: ["Carne", "Parrilla", "Fuego"] },
   { word: "Bresh", hints: ["Fiesta", "Música", "Noche"] },
   // ¡Agregá las tuyas acá abajo!
