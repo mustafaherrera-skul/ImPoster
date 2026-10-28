@@ -828,11 +828,8 @@ function lobby() {
     </div>
 
     <footer class="app-footer">
-      <div class="footer-links">
-        <span class="tiny mute">El Impostor v${APP_VERSION}</span>
-        <span class="mute">·</span>
-        <button type="button" class="link-btn tiny" data-check-updates>Buscar actualización 🔄</button>
-      </div>
+      <span class="tiny mute">El Impostor v${APP_VERSION}</span>
+      <button type="button" class="link-btn tiny" data-check-updates>Buscar actualización 🔄</button>
       <div class="footer-credits">
         Creado por <strong>Mustafa Herrera</strong> · Colaboradores: <em>Guillermo Rok (G. Rok)</em> & <em>Emanuel Géminis</em>
       </div>
