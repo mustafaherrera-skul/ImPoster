@@ -418,7 +418,8 @@ const STANDARD_WORDS = [
   { word: "Lluvia de verano", hints: ["Agua", "Calor", "Tarde", "Alivio"] },
   { word: "Mudanza", hints: ["Cajas", "Cambio", "Casa", "Traslado"] },
   { word: "Fogata", hints: ["Fuego", "Noche", "Madera", "Calor"] },
-  { word: "Sorpresa", hints: ["Asombro", "Inesperado", "Reacción", "Momento"] }
+  { word: "Sorpresa", hints: ["Asombro", "Inesperado", "Reacción", "Momento"] },
+  { word : "Amor", hints:["Musterss","Amor"]}
 ];
 
 export const DECKS = {
