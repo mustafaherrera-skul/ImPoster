@@ -1,4 +1,4 @@
-import { DECKS, WORDS } from "./words.js";
+import { DECKS, WORDS } from "./words.js?v=1.2.0";
 import {
   TALK_MS,
   canStart,
@@ -11,7 +11,9 @@ import {
   speakingOrder,
   startBlockReason,
   calculateGameScores,
-} from "./engine.js";
+} from "./engine.js?v=1.2.0";
+
+export const APP_VERSION = "1.2.0";
 
 const KEY_PLAYERS = "el-impostor-players-v3";
 const KEY_TOURNAMENT = "el-impostor-tournament-v3";
@@ -40,8 +42,169 @@ let showResetConfirm = false;
 let showBreakdown = false;
 let leaderboardAnimTimer = null;
 let leaderboardAnimPlayed = false;
+let updateAvailableVersion = null;
+let updateDismissed = false;
+let fullscreenPreference = localStorage.getItem("el-impostor-fullscreen-pref") !== "false";
 let theme = localStorage.getItem("el-impostor-theme") || "dark";
 document.documentElement.setAttribute("data-theme", theme);
+
+// ==========================================================================
+// UTILIDADES DE PANTALLA COMPLETA ROBUSTA
+// ==========================================================================
+
+function isFsActive() {
+  return typeof document !== "undefined" && !!(
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.mozFullScreenElement ||
+    document.msFullscreenElement
+  );
+}
+
+function requestAppFullscreen() {
+  const docEl = document.documentElement;
+  const fn = docEl.requestFullscreen ||
+             docEl.webkitRequestFullscreen ||
+             docEl.mozRequestFullScreen ||
+             docEl.msRequestFullscreen;
+  if (fn) {
+    try {
+      const p = fn.call(docEl);
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch {}
+  }
+}
+
+function exitAppFullscreen() {
+  const fn = document.exitFullscreen ||
+             document.webkitExitFullscreen ||
+             document.mozCancelFullScreen ||
+             document.msExitFullscreen;
+  if (fn) {
+    try {
+      const p = fn.call(document);
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch {}
+  }
+}
+
+function toggleAppFullscreen() {
+  if (!isFsActive()) {
+    fullscreenPreference = true;
+    localStorage.setItem("el-impostor-fullscreen-pref", "true");
+    requestAppFullscreen();
+  } else {
+    fullscreenPreference = false;
+    localStorage.setItem("el-impostor-fullscreen-pref", "false");
+    exitAppFullscreen();
+  }
+  updateFullscreenUi();
+}
+
+function ensureFullscreenIfPreferred() {
+  if (fullscreenPreference && !isFsActive()) {
+    requestAppFullscreen();
+  }
+}
+
+function updateFullscreenUi() {
+  const isFs = isFsActive();
+  const fsBtns = document.querySelectorAll("[data-fullscreen]");
+  fsBtns.forEach((btn) => {
+    btn.innerHTML = getFullscreenSvg(isFs);
+    btn.setAttribute("aria-label", isFs ? "Salir de pantalla completa" : "Pantalla completa");
+    btn.setAttribute("title", isFs ? "Salir de pantalla completa" : "Pantalla completa");
+    if (isFs) btn.classList.add("active");
+    else btn.classList.remove("active");
+  });
+  if (isFs) {
+    document.body.classList.add("fullscreen-active");
+  } else {
+    document.body.classList.remove("fullscreen-active");
+  }
+}
+
+// ==========================================================================
+// ACTUALIZACIÓN AUTOMÁTICA Y RESGUARDO DE DATOS
+// ==========================================================================
+
+function showToast(message, duration = 3000) {
+  let toast = document.querySelector(".app-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.className = "app-toast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add("show");
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
+    toast.classList.remove("show");
+  }, duration);
+}
+
+async function checkAppVersion(isManual = false) {
+  try {
+    const res = await fetch("./version.json?t=" + Date.now(), {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
+    });
+    if (!res.ok) {
+      if (isManual) showToast("No se pudo comprobar la versión");
+      return;
+    }
+    const data = await res.json();
+    if (data && data.version && data.version !== APP_VERSION) {
+      updateAvailableVersion = data.version;
+      render();
+    } else if (isManual) {
+      showToast("✓ Tenés la última versión instalada (v" + APP_VERSION + ")");
+    }
+  } catch {
+    if (isManual) showToast("No se pudo comprobar la conexión");
+  }
+}
+
+function exportTournamentData() {
+  const data = {
+    version: APP_VERSION,
+    exportedAt: new Date().toISOString(),
+    players,
+    tournamentStats,
+    impostorConfig,
+  };
+  const jsonStr = JSON.stringify(data, null, 2);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(jsonStr)
+      .then(() => showToast("✓ Copia guardada en portapapeles"))
+      .catch(() => prompt("Copia tus datos:", jsonStr));
+  } else {
+    prompt("Copia tus datos:", jsonStr);
+  }
+}
+
+function importTournamentData() {
+  const raw = prompt("Pegá aquí el JSON de tu copia de seguridad:");
+  if (!raw) return;
+  try {
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data.players)) {
+      alert("Formato no válido: no se encontraron jugadores.");
+      return;
+    }
+    players = data.players;
+    if (data.tournamentStats) tournamentStats = data.tournamentStats;
+    if (data.impostorConfig) impostorConfig = data.impostorConfig;
+    savePlayers();
+    saveTournamentStats();
+    saveImpostorConfig();
+    showToast("✓ ¡Datos restaurados exitosamente!");
+    render();
+  } catch {
+    alert("Error al importar datos: JSON no válido.");
+  }
+}
+
 
 // ==========================================================================
 // GESTIÓN DE JUGADORES Y TORNEO
@@ -464,6 +627,33 @@ function render() {
   }
 }
 
+function updateBanner() {
+  if (state.phase !== "lobby" || !updateAvailableVersion || updateDismissed) return "";
+  return `<div class="update-banner" id="app-update-banner">
+    <div class="update-banner-content">
+      <span>🚀 ¡Nueva versión disponible (v${esc(updateAvailableVersion)})!</span>
+    </div>
+    <div class="update-banner-actions">
+      <button type="button" class="btn-update-apply" data-apply-update>Actualizar</button>
+      <button type="button" class="btn-update-dismiss" data-dismiss-update aria-label="Descartar">✕</button>
+    </div>
+  </div>`;
+}
+
+function topActions() {
+  if (state.phase !== "lobby") return "";
+  const isDark = theme === "dark";
+  const isFs = isFsActive();
+
+  return `<div class="top-actions">
+    <button type="button" class="leaderboard-toggle-btn" data-open-leaderboard aria-label="Ver Tabla de Posiciones" title="Tabla de Posiciones">
+      🏆 <span>Ranking</span>
+    </button>
+    <button class="fullscreen-toggle ${isFs ? "active" : ""}" data-fullscreen aria-label="${isFs ? "Salir de pantalla completa" : "Pantalla completa"}" title="${isFs ? "Salir de pantalla completa" : "Pantalla completa"}">${getFullscreenSvg(isFs)}</button>
+    <button class="theme-toggle" data-theme aria-label="Cambiar tema" title="Cambiar tema">${getThemeSvg(isDark)}</button>
+  </div>`;
+}
+
 function screen() {
   let content = "";
   if (state.phase === "lobby") content = lobby();
@@ -483,7 +673,7 @@ function screen() {
   if (showTournamentWinner) overlay += tournamentWinnerModal();
   if (showResetConfirm) overlay += resetConfirmModal();
 
-  return content + overlay;
+  return updateBanner() + topActions() + content + overlay;
 }
 
 // ==========================================================================
@@ -561,19 +751,8 @@ function lobby() {
     </button>`;
   }).join("");
 
-  const isDark = theme === "dark";
-  const isFs = typeof document !== "undefined" && !!document.fullscreenElement;
-
   // Ajustar count si excede maxImp
   const activeCount = Math.min(Math.max(1, impostorConfig.count || 1), maxImp);
-
-  return `<div class="top-actions">
-      <button type="button" class="leaderboard-toggle-btn" data-open-leaderboard aria-label="Ver Tabla de Posiciones" title="Tabla de Posiciones">
-        🏆 <span>Ranking</span>
-      </button>
-      <button class="fullscreen-toggle" data-fullscreen aria-label="${isFs ? "Salir de pantalla completa" : "Pantalla completa"}" title="${isFs ? "Salir de pantalla completa" : "Pantalla completa"}">${getFullscreenSvg(isFs)}</button>
-      <button class="theme-toggle" data-theme aria-label="Cambiar tema" title="Cambiar tema">${getThemeSvg(isDark)}</button>
-    </div>
 
     <header class="stack" style="margin-top:0.5rem">
       <p class="eyebrow">Para la mesa</p>
@@ -642,7 +821,14 @@ function lobby() {
       ${reason ? `<p class="tiny">${esc(reason)}</p>` : ""}
       <button class="btn" data-deal ${canStart(state) ? "" : "disabled"}>Repartir cartas 🎲</button>
       <p class="tiny">Mazo ${esc(activeDeck.name)} · ${activeDeck.words.length} palabras</p>
-    </div>`;
+    </div>
+
+    <footer class="app-footer">
+      <p class="tiny mute">
+        El Impostor v${APP_VERSION} · 
+        <button type="button" class="link-btn" data-check-updates>Buscar actualización 🔄</button>
+      </p>
+    </footer>`;
 }
 
 function card() {
@@ -1277,6 +1463,14 @@ function standAloneLeaderboardModal() {
         <button type="button" class="btn ghost danger-text" data-ask-reset-scores>↺ Reiniciar Puntos</button>
       </div>
 
+      <div class="backup-section">
+        <p class="tiny" style="font-weight:700;color:var(--text-mute);margin-bottom:0.4rem">💾 Resguardo y Copia de Seguridad:</p>
+        <div class="row" style="gap:0.5rem">
+          <button type="button" class="btn ghost btn-sm" data-export-data>Exportar Datos</button>
+          <button type="button" class="btn ghost btn-sm" data-import-data>Restaurar Datos</button>
+        </div>
+      </div>
+
       <button type="button" class="btn ghost" data-close-modal style="margin-top:0.25rem">Cerrar</button>
     </div>
   </div>`;
@@ -1350,12 +1544,9 @@ function tournamentWinnerModal() {
 
         <p class="tiny" style="color:var(--text-mute)">Al empezar un nuevo torneo, todos los puntos volverán a 0.</p>
         
-        <div class="stack" style="width:100%;gap:0.5rem;margin-top:0.5rem">
+        <div class="stack" style="width:100%;margin-top:0.75rem">
           <button type="button" class="btn tournament-btn" data-confirm-new-tournament>
-            🔄 Empezar Nuevo Torneo (Reiniciar a 0)
-          </button>
-          <button type="button" class="btn ghost" data-close-modal>
-            Cerrar y seguir viendo
+            Empezar nuevo torneo
           </button>
         </div>
       </div>
@@ -1402,8 +1593,8 @@ function initEvents() {
   root.addEventListener("click", (event) => {
     // Si el clic fue directamente en el fondo oscuro del modal, lo cerramos
     if (event.target.classList.contains("modal-overlay")) {
+      if (showTournamentWinner) return;
       showLeaderboardModal = false;
-      showTournamentWinner = false;
       showResetConfirm = false;
       render();
       return;
@@ -1411,6 +1602,11 @@ function initEvents() {
 
     const target = event.target.closest("button") || event.target.closest("[data-close-modal]");
     if (!target) return;
+
+    // Si la pantalla completa está activa en preferencias y se salió (ej. swipe o teclado), re-activar en esta interacción del usuario
+    if (fullscreenPreference && !isFsActive() && target.dataset.fullscreen == null) {
+      ensureFullscreenIfPreferred();
+    }
 
     // Abrir tabla de posiciones
     if (target.dataset.openLeaderboard != null) {
@@ -1485,20 +1681,54 @@ function initEvents() {
       }
       return;
     }
+    // Manejo de actualización de app y resguardo de datos
+    if (target.dataset.applyUpdate != null) {
+      window.location.href = window.location.pathname + "?v=" + encodeURIComponent(updateAvailableVersion || Date.now());
+      return;
+    }
+    if (target.dataset.dismissUpdate != null) {
+      updateDismissed = true;
+      render();
+      return;
+    }
+    if (target.dataset.checkUpdates != null) {
+      checkAppVersion(true);
+      return;
+    }
+    if (target.dataset.exportData != null) {
+      exportTournamentData();
+      return;
+    }
+    if (target.dataset.importData != null) {
+      importTournamentData();
+      return;
+    }
+
     if (target.dataset.dealNext != null) {
+      if (document.activeElement && typeof document.activeElement.blur === "function") {
+        document.activeElement.blur();
+      }
+      if (fullscreenPreference) {
+        requestAppFullscreen();
+      }
       dispatch({ type: "toLobby" });
       deal();
       return;
     }
 
     // Controles estándar de partida
-    if (target.dataset.deal != null) deal();
-    if (target.dataset.fullscreen != null) {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen?.().catch(() => { });
-      } else {
-        document.exitFullscreen?.().catch(() => { });
+    if (target.dataset.deal != null) {
+      if (document.activeElement && typeof document.activeElement.blur === "function") {
+        document.activeElement.blur();
       }
+      if (fullscreenPreference) {
+        requestAppFullscreen();
+      }
+      deal();
+      return;
+    }
+    if (target.dataset.fullscreen != null) {
+      toggleAppFullscreen();
       return;
     }
     if (target.dataset.theme != null) {
@@ -1603,15 +1833,16 @@ function initEvents() {
     }
   });
 
-  // Escuchar salida de pantalla completa
-  document.addEventListener("fullscreenchange", () => {
-    const fsBtn = root.querySelector("[data-fullscreen]");
-    if (fsBtn) {
-      const isFs = !!document.fullscreenElement;
-      fsBtn.innerHTML = getFullscreenSvg(isFs);
-      fsBtn.setAttribute("aria-label", isFs ? "Salir de pantalla completa" : "Pantalla completa");
-      fsBtn.setAttribute("title", isFs ? "Salir de pantalla completa" : "Pantalla completa");
-    }
+  // Escuchar cambios de pantalla completa con soporte multiplataforma
+  document.addEventListener("fullscreenchange", updateFullscreenUi);
+  document.addEventListener("webkitfullscreenchange", updateFullscreenUi);
+  document.addEventListener("mozfullscreenchange", updateFullscreenUi);
+  document.addEventListener("MSFullscreenChange", updateFullscreenUi);
+
+  // Comprobar automáticamente actualizaciones en segundo plano
+  checkAppVersion(false);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkAppVersion(false);
   });
 
   setupDragEvents();
