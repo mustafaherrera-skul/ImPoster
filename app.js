@@ -1,4 +1,4 @@
-import { DECKS, WORDS } from "./words.js?v=1.2.0";
+import { DECKS, WORDS } from "./words.js";
 import {
   TALK_MS,
   canStart,
@@ -11,7 +11,7 @@ import {
   speakingOrder,
   startBlockReason,
   calculateGameScores,
-} from "./engine.js?v=1.2.0";
+} from "./engine.js";
 
 export const APP_VERSION = "1.2.0";
 
@@ -144,6 +144,10 @@ function showToast(message, duration = 3000) {
 }
 
 async function checkAppVersion(isManual = false) {
+  if (typeof window !== "undefined" && window.location && window.location.protocol === "file:") {
+    if (isManual) showToast("Versión local v" + APP_VERSION);
+    return;
+  }
   try {
     const res = await fetch("./version.json?t=" + Date.now(), {
       cache: "no-store",
@@ -754,7 +758,7 @@ function lobby() {
   // Ajustar count si excede maxImp
   const activeCount = Math.min(Math.max(1, impostorConfig.count || 1), maxImp);
 
-    <header class="stack" style="margin-top:0.5rem">
+  return `<header class="stack" style="margin-top:0.5rem">
       <p class="eyebrow">Para la mesa</p>
       <h1 style="font-size:3.2rem">El Impostor</h1>
       <p class="lede">Una palabra. Una pantalla. Alguien miente. 🎭</p>
